@@ -64,6 +64,42 @@ When Claude asks the server to perform analysis, the server:
 4. Returns the best analysis found during the search
 
 
+## Installation
+
+Clone the repository:
+
+The setup uses UV (Astral UV), a faster alternative to pip that offers improved dependency resolution.
+
+1. Ensure you have Python 3.10+ installed
+2. Run the setup script:
+
+```bash
+./setup.sh
+```
+
+This will:
+- Install UV if not already installed
+- Create a virtual environment with UV
+- Install the required packages using UV
+- Create the necessary state directory
+
+Alternatively, you can manually set up:
+
+```bash
+# Install UV if not already installed
+curl -fsSL https://astral.sh/uv/install.sh | bash
+```
+
+```bash
+# Create and activate a virtual environment
+uv venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+uv pip install -r requirements.txt
+```
+
+
 ## Claude Desktop Integration
 
 To integrate with Claude Desktop:
@@ -108,37 +144,6 @@ uv run server.py
 
 # OR use the MCP CLI tools
 uv run -m mcp dev server.py
-```
-
-The setup uses UV (Astral UV), a faster alternative to pip that offers improved dependency resolution.
-
-1. Ensure you have Python 3.10+ installed
-2. Run the setup script:
-
-```bash
-cd /home/ty/Repositories/ai_workspace/mcts-mcp-server
-./setup.sh
-```
-
-This will:
-- Install UV if not already installed
-- Create a virtual environment with UV
-- Install the required packages using UV
-- Create the necessary state directory
-
-Alternatively, you can manually set up:
-
-```bash
-# Install UV if not already installed
-curl -fsSL https://astral.sh/uv/install.sh | bash
-
-# Create and activate a virtual environment
-cd /home/ty/Repositories/ai_workspace/mcts-mcp-server
-uv venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-uv pip install -r requirements.txt
 ```
 
 ## Testing the Server
