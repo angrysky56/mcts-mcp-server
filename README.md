@@ -164,7 +164,6 @@ To test that the server is working correctly:
 
 ```bash
 # Activate the virtual environment
-cd /home/ty/Repositories/ai_workspace/mcts-mcp-server
 source .venv/bin/activate
 
 # Run the test script
