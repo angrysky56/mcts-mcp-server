@@ -1,0 +1,104 @@
+# Computational Residue: Python Bytecode Manifestations
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Epistemic Isolation Chambers: Virtual Environment Structures
+env/
+venv/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+
+# Cognitive Ephemera: Distribution/Packaging Artifacts
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Temporal Memory Fragments: Log Patterns
+*.log
+logs/
+*/logs/
+log.txt
+mcts_logs/
+*.log.*
+
+# Neural State Persistence: MCTS-specific Runtime Data
+.mcts_cache/
+.mcts_state/
+.mcts_memory/
+mcts_session_*.json
+node_evaluations/
+simulation_results/
+
+# Integrated Development Ecosystems: IDE Resonance Patterns
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# Entropic Boundary Conditions: OS-generated Artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Empirical Knowledge Repositories: Data Storage Patterns
+*.sqlite
+*.db
+*.csv
+*.json
+*.pickle
+*.pkl
+!requirements.txt
+!default_config.json
+
+# Emergent Computation Traces: Test Coverage Artifacts
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Quantum State Configurations: Local Environment Settings
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+config.local.yaml
+settings.local.py
+
+# Cognitive Boundary Exceptions: Intentional Inclusions
+!examples/*.json
+!tests/fixtures/*.json
+!schemas/*.json
