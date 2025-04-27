@@ -182,4 +182,4 @@ Contributions to improve the MCTS MCP server are welcome. Some areas for potenti
 - Enhancing the tree visualization and result reporting
 - Optimizing the MCTS algorithm parameters
 
-# License: MIT
+# License: [MIT](https://github.com/angrysky56/mcts-mcp-server/blob/main/LICENSE)
