@@ -300,30 +300,26 @@ This returns the top 3 runs with a score of at least 8.0.
 ## Simple Usage Instructions
 
 1. **Changing Models**:
-   ```
+   
    list_ollama_models()  # See available models
    set_ollama_model("qwen3:0.6b")  # Set to fast small model
-   ```
+   
 2. **Starting a New Analysis**:
-   ```
+   
    initialize_mcts(question="Your question here", chat_id="unique_identifier")
-   ```
-
+   
 3. **Running the Analysis**:
-   ```
+   
    run_mcts(iterations=3, simulations_per_iteration=10)
-   ```
-
+   
 4. **Comparing Performance**:
-   ```
+   
    run_model_comparison(question="Your question", iterations=2)
-   ```
 
 5. **Getting Results**:
-   ```
+   
    generate_synthesis()  # Final summary of results
    get_mcts_status()     # Current status and metrics
-   ```
 
 Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
 
