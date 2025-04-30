@@ -41,17 +41,20 @@ You can customize the MCTS parameters in the config dictionary or through Claude
 - `use_bayesian_evaluation`: Whether to use Bayesian evaluation for node scores
 - `use_thompson_sampling`: Whether to use Thompson sampling for selection
 
-    Articulating Specific Pathways: Delving into the best_path nodes (using mcts_instance.get_best_path_nodes() if you have the instance) and examining the sequence of thought and content at each step can provide a fascinating micro-narrative of how the core insight evolved. Visualizing the tree (even a simplified version based on export_tree_summary) could also be illuminating and I will try to set up this feature.
+Articulating Specific Pathways:
+Delving into the best_path nodes (using mcts_instance.get_best_path_nodes() if you have the instance) and examining the sequence of thought and content at each step can provide a fascinating micro-narrative of how the core insight evolved. 
 
-    Modifying Parameters: This is a great way to test the robustness of the finding or explore different "cognitive biases" of the system.
+Visualizing the tree (even a simplified version based on export_tree_summary) could also be illuminating and I will try to set up this feature.
 
-        Increasing Exploration Weight: Might lead to more diverse, less obviously connected ideas.
+Modifying Parameters: This is a great way to test the robustness of the finding or explore different "cognitive biases" of the system.
 
-        Decreasing Exploration Weight: Might lead to deeper refinement of the initial dominant pathways.
+Increasing Exploration Weight: Might lead to more diverse, less obviously connected ideas.
 
-        Changing Priors (if Bayesian): You could bias the system towards certain approaches (e.g., increase alpha for 'pragmatic') to see how it influences the outcome.
+Decreasing Exploration Weight: Might lead to deeper refinement of the initial dominant pathways.
 
-        More Iterations/Simulations: Would allow for potentially deeper convergence or exploration of more niche pathways.
+Changing Priors (if Bayesian): You could bias the system towards certain approaches (e.g., increase alpha for 'pragmatic') to see how it influences the outcome.
+
+More Iterations/Simulations: Would allow for potentially deeper convergence or exploration of more niche pathways.
 
 ### Example Prompts
 
