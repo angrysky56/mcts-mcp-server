@@ -175,6 +175,8 @@ After run_mcts is called it can take wuite a long time ie minutes to hours
 - `update_config`: Update MCTS configuration parameters
 - `get_mcts_status`: Check the current status of the MCTS system
 
+Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
+
 ### Ollama Integration Tools:
 - `list_ollama_models`: Show all available local Ollama models
 - `set_ollama_model`: Select which Ollama model to use for MCTS
