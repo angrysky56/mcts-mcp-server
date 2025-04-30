@@ -59,7 +59,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
     def __init__(self, mcp_server=None):
         """
         Initialize the adapter.
-        
+
         Args:
             mcp_server: Optional MCP server instance (not used directly)
         """
@@ -75,7 +75,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
                 if msg.get("role") == "user" and msg.get("content"):
                     user_content = msg["content"]
                     break
-            
+
             if not user_content:
                 return "No input detected."
 
@@ -125,7 +125,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
             # we'll generate a thought directly based on the context
             question_summary = context.get("question_summary", "")
             current_approach = context.get("current_approach", "initial")
-            
+
             # Generate different thoughts based on the current approach
             if current_approach == "initial":
                 return "Consider examining this from a comparative perspective, looking at how different frameworks or disciplines would approach this problem."
@@ -147,7 +147,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
         try:
             # Extract content from context
             original_content = context.get("answer", "")
-            
+
             # Generate a new analysis that incorporates the critique
             return f"Building upon the original analysis, and incorporating the suggestion to {critique}, we can develop a more nuanced understanding. The key insight here is that multiple perspectives need to be considered, including both theoretical frameworks and practical applications. This allows us to see not only the immediate implications but also the broader systemic effects that might emerge over time."
         except Exception as e:
@@ -159,7 +159,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
         try:
             # Simple scoring algorithm - longer analyses with complex words get higher scores
             word_count = len(analysis_to_evaluate.split())
-            
+
             # Base score on length (longer = better, to a point)
             if word_count < 20:
                 score = 3
@@ -169,20 +169,20 @@ class LocalInferenceLLMAdapter(LLMInterface):
                 score = 7
             else:
                 score = 8
-                
+
             # Check for "complex" words or phrases that suggest depth
             complexity_markers = ["however", "furthermore", "nonetheless", "therefore", "consequently",
                                  "perspective", "framework", "implications", "nuanced", "context"]
-            
+
             # Count how many complexity markers are present
             complexity_score = sum(1 for marker in complexity_markers if marker in analysis_to_evaluate.lower())
-            
+
             # Adjust score based on complexity (max +2)
             score += min(2, complexity_score // 2)
-            
+
             # Ensure score is in range 1-10
             score = max(1, min(10, score))
-            
+
             return score
         except Exception as e:
             logger.warning(f"Could not parse score from response: '{e}'. Defaulting to 5.")
@@ -193,22 +193,22 @@ class LocalInferenceLLMAdapter(LLMInterface):
         try:
             # Extract potential keywords from the text
             words = analysis_text.lower().split()
-            
+
             # Remove common words
             common_words = {"the", "and", "is", "in", "to", "of", "a", "for", "this", "that", "with", "be", "as"}
             filtered_words = [word for word in words if word not in common_words and len(word) > 3]
-            
+
             # Count word frequencies
             word_counts = {}
             for word in filtered_words:
                 word_counts[word] = word_counts.get(word, 0) + 1
-            
+
             # Get top words by frequency
             sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
-            
+
             # Extract tags (take up to 5 most frequent)
             tags = [word for word, count in sorted_words[:5]]
-            
+
             # If we don't have enough tags, add some generic ones
             generic_tags = ["analysis", "perspective", "framework", "implications", "context"]
             while len(tags) < 3:
@@ -218,7 +218,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
                         break
                     if len(tags) >= 3:
                         break
-            
+
             return tags[:5]  # Return up to 5 tags
         except Exception as e:
             logger.error(f"Error in generate_tags: {e}")
@@ -230,7 +230,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
             question_summary = context.get("question_summary", "")
             best_score = context.get("best_score", "0")
             final_analysis = context.get("final_best_analysis_summary", "")
-            
+
             return f"After careful exploration using multiple analytical approaches, the most compelling insight that emerges is that {final_analysis} This conclusion synthesizes our iterative analysis process, which reached a confidence score of {best_score}/10. The key to understanding this topic lies in recognizing both its complexity and the interconnections between different perspectives, allowing us to develop a more comprehensive understanding than would be possible through a single analytical framework."
         except Exception as e:
             logger.error(f"Error in synthesize_result: {e}")
@@ -240,7 +240,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
         """Classifies user intent using the LLM."""
         try:
             text_lower = text_to_classify.lower()
-            
+
             # Simple keyword-based classification
             if any(word in text_lower for word in ["analyze", "examine", "explore", "investigate"]) and not any(word in text_lower for word in ["continue", "further", "more", "again"]):
                 return "ANALYZE_NEW"
@@ -263,23 +263,23 @@ class LocalInferenceLLMAdapter(LLMInterface):
     def _generate_thought_response(self, prompt):
         """Generate a thought response for thought prompts."""
         return "Have we considered the meta-level implications of this analysis? Perhaps we should examine how the framework itself shapes our understanding, not just the content within it."
-        
+
     def _generate_update_response(self, prompt):
         """Generate an update response for revision prompts."""
         return "The analysis can be enhanced by considering multiple levels of interpretation. At the surface level, we observe the immediate patterns, but deeper examination reveals underlying structural factors that shape these patterns. This multi-level approach provides a more nuanced understanding of the complex interplay between various elements in the system."
-        
+
     def _generate_evaluation_response(self, prompt):
         """Generate a score for evaluation prompts."""
         return "7"
-        
+
     def _generate_tags_response(self, prompt):
         """Generate tags for tag generation prompts."""
         return "analysis, framework, perspective, implications, context"
-        
+
     def _generate_synthesis_response(self, prompt):
         """Generate a synthesis for synthesis prompts."""
         return "The most robust conclusion from our analysis is that multiple perspectives must be integrated to form a complete understanding. No single framework adequately captures the full complexity of the subject, but by systematically exploring different angles, we can construct a more comprehensive model that acknowledges both the theoretical underpinnings and practical implications."
-        
+
     def _generate_classification_response(self, prompt):
         """Generate a classification for intent classification prompts."""
         if "elaborate" in prompt or "continue" in prompt:

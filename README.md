@@ -61,7 +61,7 @@ You can customize the MCTS parameters in the config dictionary or through Claude
 - "How does this MCTS process work?"
 - "Show me the current MCTS configuration"
 
-![alt text](image.png)
+![alt text](image-2.png)
 
 ## How It Works
 
@@ -144,6 +144,72 @@ Example configuration:
 
 **Make sure to update the paths** to match the location of the MCTS MCP server on your system.
 
+
+## Suggested System Prompt and **Updated** tools including Ollama integration i.e. Place the following block in your Project Instructions:
+
+---
+
+```markdown
+MCTS server and usage instructions:
+
+MCTS server and usage instructions:
+list_ollama_models()  # Check what models are available
+set_ollama_model("cogito:latest")  # Set the model you want to use
+initialize_mcts(question="Your question here", chat_id="unique_id")  # Initialize analysis
+run_mcts(iterations=1, simulations_per_iteration=5)  # Run the analysis
+## MCTS-MCP Tools Overview
+
+### Core MCTS Tools:
+- `initialize_mcts`: Start a new MCTS analysis with a specific question
+- `run_mcts`: Run the MCTS algorithm for a set number of iterations/simulations
+- `generate_synthesis`: Generate a final summary of the MCTS results
+- `get_config`: View current MCTS configuration parameters
+- `update_config`: Update MCTS configuration parameters
+- `get_mcts_status`: Check the current status of the MCTS system
+
+### Ollama Integration Tools:
+- `list_ollama_models`: Show all available local Ollama models
+- `set_ollama_model`: Select which Ollama model to use for MCTS
+- `run_model_comparison`: Run the same MCTS process across multiple models
+
+### Results Collection:
+- Automatically stores results in `/home/ty/Repositories/ai_workspace/mcts-mcp-server/results`
+- Organizes by model name and run ID
+- Stores metrics, progress info, and final outputs
+
+## Usage Instructions
+
+1. **Starting a New Analysis**:
+   ```
+   initialize_mcts(question="Your question here", chat_id="unique_identifier")
+   ```
+
+2. **Running the Analysis**:
+   ```
+   run_mcts(iterations=3, simulations_per_iteration=10)
+   ```
+
+3. **Changing Models**:
+   ```
+   list_ollama_models()  # See available models
+   set_ollama_model("qwen3:0.6b")  # Set to fast small model
+   ```
+
+4. **Comparing Performance**:
+   ```
+   run_model_comparison(question="Your question", iterations=2)
+   ```
+
+5. **Getting Results**:
+   ```
+   generate_synthesis()  # Final summary of results
+   get_mcts_status()     # Current status and metrics
+   ```
+
+Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
+```
+
+---
 
 ## For Developers
 

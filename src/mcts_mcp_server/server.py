@@ -15,8 +15,28 @@ import signal
 import time
 import psutil
 from typing import Optional
+
+# Add debug print for Python environment
+print(f"Python executable: {sys.executable}")
+print(f"Python version: {sys.version}")
+print(f"Python path: {sys.path}")
+print(f"Current directory: {os.getcwd()}")
+
+# Add the project directory to the Python path for more reliable imports
+project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_dir not in sys.path:
+    sys.path.insert(0, project_dir)
+    print(f"Added {project_dir} to Python path")
+
+# Also add the src directory
+src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+    print(f"Added {src_dir} to Python path")
+
 from mcp.server.fastmcp import FastMCP
-from tools import register_mcts_tools
+# Use proper package import
+from mcts_mcp_server.tools import register_mcts_tools
 
 # Set up logging
 logging.basicConfig(

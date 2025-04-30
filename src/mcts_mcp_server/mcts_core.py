@@ -37,10 +37,10 @@ except ImportError:
 # ==============================================================================
 
 DEFAULT_CONFIG = {
-    "max_children": 10,
+    "max_children": 6,               # Reduced from 10 to speed up processing
     "exploration_weight": 3.0,
     "max_iterations": 1,
-    "simulations_per_iteration": 10,
+    "simulations_per_iteration": 5,  # Reduced from 10 to speed up processing
     "surprise_threshold": 0.66,
     "use_semantic_distance": True,
     "relative_evaluation": False,
@@ -50,10 +50,10 @@ DEFAULT_CONFIG = {
     "global_context_in_prompts": True,
     "track_explored_approaches": True,
     "sibling_awareness": True,
-    "memory_cutoff": 50,
+    "memory_cutoff": 20,             # Reduced from 50 to use less memory
     "early_stopping": True,
-    "early_stopping_threshold": 10.0,
-    "early_stopping_stability": 2,
+    "early_stopping_threshold": 8.0,  # Reduced from 10.0 to stop earlier with good results
+    "early_stopping_stability": 1,    # Reduced from 2 to stop faster when a good result is found
     "surprise_semantic_weight": 0.4,
     "surprise_philosophical_shift_weight": 0.3,
     "surprise_novelty_weight": 0.3,
@@ -1206,103 +1206,133 @@ class MCTS:
         cfg = self.config
         logger.info(f"Starting MCTS search: {num_iterations} iterations, {simulations_per_iteration} simulations/iter.")
 
+        # Performance optimization - run multiple simulations concurrently
+        max_concurrent = 3  # Set a reasonable limit for concurrency
+        
         for i in range(num_iterations):
             self.iterations_completed = i + 1
             logger.info(f"--- Starting Iteration {self.iterations_completed}/{num_iterations} ---")
             best_score_before_iter = self.best_score
 
-            for j in range(simulations_per_iteration):
-                self.simulations_completed += 1
-                current_sim_num = j + 1
-                if self.debug_logging: logger.debug(f"--- Iter {self.iterations_completed}, Sim {current_sim_num}/{simulations_per_iteration} ---")
-
-                # 1. Select
-                leaf = await self.select()
-                if not leaf:
-                     logger.error(f"Sim {current_sim_num}: Selection returned None. Skipping simulation.")
-                     continue
-
-                # 2. Expand (if not terminal and not fully expanded)
-                node_to_simulate = leaf
-                if not leaf.fully_expanded() and leaf.content: # Check content exists
-                    if self.debug_logging: logger.debug(f"Sim {current_sim_num}: Attempting expansion from Node {leaf.sequence}")
-                    expanded_node = await self.expand(leaf)
-                    if expanded_node:
-                        node_to_simulate = expanded_node # Simulate the newly expanded node
-                        if self.debug_logging: logger.debug(f"Sim {current_sim_num}: Expanded {leaf.sequence} -> {node_to_simulate.sequence}")
-                    else:
-                        if self.debug_logging: logger.warning(f"Sim {current_sim_num}: Expansion failed for {leaf.sequence}. Simulating original leaf.")
-                        node_to_simulate = leaf # Simulate original leaf if expansion failed
-                elif self.debug_logging:
-                     logger.debug(f"Sim {current_sim_num}: Node {leaf.sequence} is fully expanded or has no content. Simulating directly.")
-
-
-                # 3. Simulate
-                score = None
-                if node_to_simulate and node_to_simulate.content:
-                     score = await self.simulate(node_to_simulate)
-                elif node_to_simulate:
-                     logger.warning(f"Sim {current_sim_num}: Skipping simulation for {node_to_simulate.sequence} (no content).")
-                     score = 5.0 # Assign default score? Or skip backprop? Assigning default.
-                else: # Should not happen if selection worked
-                     logger.error(f"Sim {current_sim_num}: node_to_simulate is None after select/expand. Skipping simulation.")
-                     continue # Skip backprop
-
-                # 4. Backpropagate
-                if score is not None:
-                    self.backpropagate(node_to_simulate, score)
-
-                    # Update overall best score/solution found so far
-                    if score > self.best_score:
-                        logger.info(f"Sim {current_sim_num}: ✨ New best! Score: {score:.1f} (Node {node_to_simulate.sequence})")
-                        self.best_score = score
-                        self.best_solution = str(node_to_simulate.content)
-                        self.high_score_counter = 0 # Reset stability counter
-                    elif score == self.best_score:
-                        # If score matches best, don't reset counter
-                        pass
-                    else: # Score is lower than best
-                        self.high_score_counter = 0 # Reset stability counter if score drops
-
-
-                    # Check early stopping (threshold) - based on overall best score
-                    if cfg["early_stopping"] and self.best_score >= cfg["early_stopping_threshold"]:
-                        self.high_score_counter += 1 # Increment counter only if score >= threshold
-                        if self.debug_logging: logger.debug(f"Sim {current_sim_num}: Best score ({self.best_score:.1f}) >= threshold. Stability: {self.high_score_counter}/{cfg['early_stopping_stability']}")
-                        if self.high_score_counter >= cfg["early_stopping_stability"]:
-                            logger.info(f"EARLY STOPPING criteria met after Sim {current_sim_num}, Iter {self.iterations_completed}.")
-                            # Optionally store snapshot here
-                            return # Exit outer iteration loop
-                    # Reset counter if score drops below threshold (handled above)
-                    # else:
-                    #      self.high_score_counter = 0 # Reset if best score drops below threshold
-
-                else: # Simulation failed (score is None)
-                    if node_to_simulate: logger.warning(f"Sim {current_sim_num}: Simulation failed for Node {node_to_simulate.sequence}. No score obtained.")
-                    self.high_score_counter = 0 # Reset stability counter if sim fails
-
+            # Process simulations in batches for better concurrency
+            for batch_start in range(0, simulations_per_iteration, max_concurrent):
+                batch_size = min(max_concurrent, simulations_per_iteration - batch_start)
+                batch_tasks = []
+                
+                # Create tasks for the batch
+                for j in range(batch_start, batch_start + batch_size):
+                    sim_num = j + 1
+                    task = asyncio.create_task(self._run_single_simulation(sim_num, simulations_per_iteration))
+                    batch_tasks.append(task)
+                
+                # Wait for the batch to complete
+                await asyncio.gather(*batch_tasks)
+                
+                # Check early stopping after each batch
+                if (cfg["early_stopping"] and
+                    self.best_score >= cfg["early_stopping_threshold"] and
+                    self.high_score_counter >= cfg["early_stopping_stability"]):
+                    logger.info(f"EARLY STOPPING criteria met during Iteration {self.iterations_completed}.")
+                    return  # Exit early
+            
             # --- End of Simulations for Iteration i ---
             logger.info(f"--- Finished Iteration {self.iterations_completed}. Current Best Score: {self.best_score:.2f} ---")
-            # Optional: Add delay between iterations
-            # await asyncio.sleep(0.1)
 
-            # Re-check early stopping condition here in case the last simulation triggered it but didn't return early
+            # Re-check early stopping condition after the iteration
             if (cfg["early_stopping"] and
                 self.best_score >= cfg["early_stopping_threshold"] and
                 self.high_score_counter >= cfg["early_stopping_stability"]):
-                 logger.info(f"EARLY STOPPING criteria met at end of Iteration {self.iterations_completed}.")
-                 break # Exit outer iteration loop
-
+                logger.info(f"EARLY STOPPING criteria met at end of Iteration {self.iterations_completed}.")
+                break  # Exit outer iteration loop
 
         logger.info("MCTS search finished.")
+    
+    async def _run_single_simulation(self, current_sim_num: int, total_sims: int) -> None:
+        """Runs a single simulation (select-expand-simulate-backpropagate cycle)."""
+        self.simulations_completed += 1
+        cfg = self.config
+        
+        if self.debug_logging: 
+            logger.debug(f"--- Sim {current_sim_num}/{total_sims} ---")
+
+        # 1. Select
+        leaf = await self.select()
+        if not leaf:
+            logger.error(f"Sim {current_sim_num}: Selection returned None. Skipping simulation.")
+            return
+
+        # 2. Expand (if not terminal and not fully expanded)
+        node_to_simulate = leaf
+        if not leaf.fully_expanded() and leaf.content:  # Check content exists
+            if self.debug_logging: 
+                logger.debug(f"Sim {current_sim_num}: Attempting expansion from Node {leaf.sequence}")
+            expanded_node = await self.expand(leaf)
+            if expanded_node:
+                node_to_simulate = expanded_node  # Simulate the newly expanded node
+                if self.debug_logging: 
+                    logger.debug(f"Sim {current_sim_num}: Expanded {leaf.sequence} -> {node_to_simulate.sequence}")
+            else:
+                if self.debug_logging: 
+                    logger.warning(f"Sim {current_sim_num}: Expansion failed for {leaf.sequence}. Simulating original leaf.")
+                node_to_simulate = leaf  # Simulate original leaf if expansion failed
+        elif self.debug_logging:
+            logger.debug(f"Sim {current_sim_num}: Node {leaf.sequence} is fully expanded or has no content. Simulating directly.")
+
+        # 3. Simulate
+        score = None
+        if node_to_simulate and node_to_simulate.content:
+            score = await self.simulate(node_to_simulate)
+        elif node_to_simulate:
+            logger.warning(f"Sim {current_sim_num}: Skipping simulation for {node_to_simulate.sequence} (no content).")
+            score = 5.0  # Assign default score
+        else:  # Should not happen if selection worked
+            logger.error(f"Sim {current_sim_num}: node_to_simulate is None after select/expand. Skipping simulation.")
+            return  # Skip backprop
+
+        # 4. Backpropagate
+        if score is not None:
+            self.backpropagate(node_to_simulate, score)
+
+            # Update overall best score/solution found so far
+            if score > self.best_score:
+                logger.info(f"Sim {current_sim_num}: ✨ New best! Score: {score:.1f} (Node {node_to_simulate.sequence})")
+                self.best_score = score
+                self.best_solution = str(node_to_simulate.content)
+                self.high_score_counter = 0  # Reset stability counter
+            elif score == self.best_score:
+                # If score matches best, don't reset counter
+                pass
+            else:  # Score is lower than best
+                self.high_score_counter = 0  # Reset stability counter if score drops
+
+            # Check early stopping (threshold) - based on overall best score
+            if cfg["early_stopping"] and self.best_score >= cfg["early_stopping_threshold"]:
+                self.high_score_counter += 1  # Increment counter only if score >= threshold
+                if self.debug_logging: 
+                    logger.debug(f"Sim {current_sim_num}: Best score ({self.best_score:.1f}) >= threshold. Stability: {self.high_score_counter}/{cfg['early_stopping_stability']}")
+        else:  # Simulation failed (score is None)
+            if node_to_simulate: 
+                logger.warning(f"Sim {current_sim_num}: Simulation failed for Node {node_to_simulate.sequence}. No score obtained.")
+            self.high_score_counter = 0  # Reset stability counter if sim fails
 
 
     def get_final_results(self) -> MCTSResult:
         """Returns the best score and solution found."""
+        # Clean the best solution content of <think> tags if present
+        cleaned_solution = self.best_solution
+        if cleaned_solution and isinstance(cleaned_solution, str):
+            # First try to remove the entire <think> block if it's a pure think block
+            clean_attempt = re.sub(r'<think>.*?</think>', '', cleaned_solution, flags=re.DOTALL)
+            # If that removes everything, keep the original but strip just the tags
+            if not clean_attempt.strip() and ("<think>" in cleaned_solution or "</think>" in cleaned_solution):
+                cleaned_solution = re.sub(r'</?think>', '', cleaned_solution)
+            else:
+                cleaned_solution = clean_attempt
+            
         # In a real app, you might want more detailed results (e.g., best node path)
         return MCTSResult(
             best_score=self.best_score,
-            best_solution_content=self.best_solution,
+            best_solution_content=cleaned_solution.strip() if isinstance(cleaned_solution, str) else cleaned_solution,
             mcts_instance=self # Return self for further analysis if needed
         )
 
