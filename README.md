@@ -157,6 +157,11 @@ list_ollama_models()  # Check what models are available
 set_ollama_model("cogito:latest")  # Set the model you want to use
 initialize_mcts(question="Your question here", chat_id="unique_id")  # Initialize analysis
 run_mcts(iterations=1, simulations_per_iteration=5)  # Run the analysis
+
+After run_mcts is called it can take wuite a long time ie minutes to hours
+- so you may discuss any ideas or questions or await user confirmation of the process finishing,
+- then proceed to synthesis and analysis tools on resumption of chat.
+
 ## MCTS-MCP Tools Overview
 
 ### Core MCTS Tools:
@@ -181,8 +186,6 @@ run_mcts(iterations=1, simulations_per_iteration=5)  # Run the analysis
 
 This extension adds powerful analysis tools to the MCTS-MCP Server, making it easy to extract insights and understand results from your MCTS runs.
 
-## Overview
-
 The MCTS Analysis Tools provide a suite of integrated functions to:
 
 1. List and browse MCTS runs
@@ -191,11 +194,8 @@ The MCTS Analysis Tools provide a suite of integrated functions to:
 4. Compare results across different runs
 5. Suggest improvements for better performance
 
-## Installation
 
-The tools are now integrated directly into the MCTS-MCP Server. No additional setup is required.
-
-## Available Tools
+## Available Run Analysis Tools
 
 ### Browsing and Basic Information
 
