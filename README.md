@@ -194,8 +194,6 @@ The MCTS Analysis Tools provide a suite of integrated functions to:
 4. Compare results across different runs
 5. Suggest improvements for better performance
 
----
-
 ## Available Run Analysis Tools
 
 ### Browsing and Basic Information
@@ -216,8 +214,6 @@ The MCTS Analysis Tools provide a suite of integrated functions to:
 - `get_mcts_report(run_id, format='markdown')`: Generate a comprehensive report (formats: 'markdown', 'text', 'html')
 - `get_best_mcts_runs(count=5, min_score=7.0)`: Get the best runs based on score
 - `compare_mcts_runs(run_ids)`: Compare multiple runs to identify similarities and differences
-
----
 
 ## Usage Examples
 
@@ -240,8 +236,6 @@ To get key insights from a run:
 ```python
 get_mcts_insights(run_id='cogito:latest_1745979984')
 ```
-
----
 
 ### Generating Reports
 
@@ -266,7 +260,6 @@ To compare multiple runs:
 ```python
 compare_mcts_runs(['cogito:latest_1745979984', 'qwen3:0.6b_1745979584'])
 ```
----
 
 ## Understanding the Results
 
@@ -277,8 +270,6 @@ The analysis tools extract several key elements from MCTS runs:
 3. **Conclusions**: The synthesized conclusions or insights from the analysis
 4. **Tags**: Automatically generated topic tags from the content
 
----
-
 ## Troubleshooting
 
 If you encounter any issues with the analysis tools:
@@ -287,8 +278,6 @@ If you encounter any issues with the analysis tools:
 2. Verify that the run ID you're using exists and is correct
 3. Try listing all runs to see what's available: `list_mcts_runs()`
 4. Make sure the `.best_solution.txt` file exists in the run's directory
-
----
 
 ## Advanced Usage
 
@@ -316,8 +305,6 @@ best_runs = get_best_mcts_runs(count=3, min_score=8.0)
 ```
 
 This returns the top 3 runs with a score of at least 8.0.
-
----
 
 ## Simple Usage Instructions
 
@@ -349,9 +336,8 @@ This returns the top 3 runs with a score of at least 8.0.
 
 Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
 
----
-
 ```
+---
 
 ![alt text](image-3.png)
 
