@@ -47,6 +47,7 @@ mcts_logs/
 mcts_session_*.json
 node_evaluations/
 simulation_results/
+results/
 
 # Integrated Development Ecosystems: IDE Resonance Patterns
 .idea/

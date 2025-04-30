@@ -18,24 +18,17 @@ This MCP server enables Claude to use Monte Carlo Tree Search (MCTS) algorithms 
 
 ## Usage
 
-The server exposes the following tools to Claude:
-
-- `initialize_mcts`: Start a new MCTS analysis with a given question
-- `run_mcts`: Run the MCTS algorithm for a specified number of iterations
-- `generate_synthesis`: Generate a final synthesis of the MCTS results
-- `get_config`: View the current MCTS configuration
-- `update_config`: Update the MCTS configuration
-- `get_mcts_status`: Get the current status of the MCTS system
+The server exposes the many tools to your LLM detailed below in a copy-pasteable format for your system prompt.
 
 When you ask Claude to perform deep analysis on a topic or question, it will leverage these tools automatically to explore different angles using the
-MCTS algorithm.
+MCTS algorithm and analysis tools.
 
 
 ![alt text](image-2.png)
 
 ## How It Works
 
-The MCTS MCP server now uses a local inference approach rather than trying to call the LLM directly. This is compatible with the MCP protocol, which
+The MCTS MCP server uses a local inference approach rather than trying to call the LLM directly. This is compatible with the MCP protocol, which
 is designed for tools to be called by an AI assistant (like Claude) rather than for the tools to call the AI model themselves.
 
 When Claude asks the server to perform analysis, the server:
