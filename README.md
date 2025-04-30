@@ -30,39 +30,6 @@ The server exposes the following tools to Claude:
 When you ask Claude to perform deep analysis on a topic or question, it will leverage these tools automatically to explore different angles using the
 MCTS algorithm.
 
-## Configuration
-
-You can customize the MCTS parameters in the config dictionary or through Claude's `update_config` tool. Key parameters include:
-
-- `max_iterations`: Number of MCTS iterations to run
-- `simulations_per_iteration`: Number of simulations per iteration
-- `exploration_weight`: Controls exploration vs. exploitation balance (in UCT)
-- `early_stopping`: Whether to stop early if a high-quality solution is found
-- `use_bayesian_evaluation`: Whether to use Bayesian evaluation for node scores
-- `use_thompson_sampling`: Whether to use Thompson sampling for selection
-
-Articulating Specific Pathways:
-Delving into the best_path nodes (using mcts_instance.get_best_path_nodes() if you have the instance) and examining the sequence of thought and content at each step can provide a fascinating micro-narrative of how the core insight evolved. 
-
-Visualizing the tree (even a simplified version based on export_tree_summary) could also be illuminating and I will try to set up this feature.
-
-Modifying Parameters: This is a great way to test the robustness of the finding or explore different "cognitive biases" of the system.
-
-Increasing Exploration Weight: Might lead to more diverse, less obviously connected ideas.
-
-Decreasing Exploration Weight: Might lead to deeper refinement of the initial dominant pathways.
-
-Changing Priors (if Bayesian): You could bias the system towards certain approaches (e.g., increase alpha for 'pragmatic') to see how it influences the outcome.
-
-More Iterations/Simulations: Would allow for potentially deeper convergence or exploration of more niche pathways.
-
-### Example Prompts
-
-- "Analyze the implications of artificial intelligence on human creativity"
-- "Continue exploring the ethical dimensions of this topic"
-- "What was the best analysis you found in the last run?"
-- "How does this MCTS process work?"
-- "Show me the current MCTS configuration"
 
 ![alt text](image-2.png)
 
@@ -177,6 +144,34 @@ After run_mcts is called it can take wuite a long time ie minutes to hours
 
 Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
 
+## Configuration
+
+You can customize the MCTS parameters in the config dictionary or through Claude's `update_config` tool. Key parameters include:
+
+- `max_iterations`: Number of MCTS iterations to run
+- `simulations_per_iteration`: Number of simulations per iteration
+- `exploration_weight`: Controls exploration vs. exploitation balance (in UCT)
+- `early_stopping`: Whether to stop early if a high-quality solution is found
+- `use_bayesian_evaluation`: Whether to use Bayesian evaluation for node scores
+- `use_thompson_sampling`: Whether to use Thompson sampling for selection
+
+Articulating Specific Pathways:
+Delving into the best_path nodes (using mcts_instance.get_best_path_nodes() if you have the instance) and examining the sequence of thought and content
+at each step can provide a fascinating micro-narrative of how the core insight evolved.
+
+Visualizing the tree (even a simplified version based on export_tree_summary) could also be illuminating and I will try to set up this feature.
+
+Modifying Parameters: This is a great way to test the robustness of the finding or explore different "cognitive biases" of the system.
+
+Increasing Exploration Weight: Might lead to more diverse, less obviously connected ideas.
+
+Decreasing Exploration Weight: Might lead to deeper refinement of the initial dominant pathways.
+
+Changing Priors (if Bayesian): You could bias the system towards certain approaches (e.g., increase alpha for 'pragmatic') to see how it influences the
+outcome.
+
+More Iterations/Simulations: Would allow for potentially deeper convergence or exploration of more niche pathways.
+
 ### Ollama Integration Tools:
 - `list_ollama_models`: Show all available local Ollama models
 - `set_ollama_model`: Select which Ollama model to use for MCTS
@@ -273,7 +268,7 @@ If you encounter any issues with the analysis tools:
 3. Try listing all runs to see what's available: `list_mcts_runs()`
 4. Make sure the `.best_solution.txt` file exists in the run's directory
 
-## Advanced Usage
+## Advanced Example Usage
 
 ### Customizing Reports
 
@@ -302,31 +297,38 @@ This returns the top 3 runs with a score of at least 8.0.
 ## Simple Usage Instructions
 
 1. **Changing Models**:
-   
+
    list_ollama_models()  # See available models
    set_ollama_model("qwen3:0.6b")  # Set to fast small model
-   
+
 2. **Starting a New Analysis**:
-   
+
    initialize_mcts(question="Your question here", chat_id="unique_identifier")
-   
+
 3. **Running the Analysis**:
-   
+
    run_mcts(iterations=3, simulations_per_iteration=10)
-   
+
 4. **Comparing Performance**:
-   
+
    run_model_comparison(question="Your question", iterations=2)
 
 5. **Getting Results**:
-   
+
    generate_synthesis()  # Final summary of results
    get_mcts_status()     # Current status and metrics
 
-Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
 
 ```
 ---
+
+### Example Prompts
+
+- "Analyze the implications of artificial intelligence on human creativity"
+- "Continue exploring the ethical dimensions of this topic"
+- "What was the best analysis you found in the last run?"
+- "How does this MCTS process work?"
+- "Show me the current MCTS configuration"
 
 ![alt text](image-3.png)
 
