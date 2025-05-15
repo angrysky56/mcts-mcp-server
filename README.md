@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/angrysky56-mcts-mcp-server-badge.png)](https://mseep.ai/app/angrysky56-mcts-mcp-server)
+
 # MCTS MCP Server
 
 A Model Context Protocol (MCP) server that exposes an Advanced Bayesian Monte Carlo Tree Search (MCTS) engine for AI-assisted analysis and reasoning.
