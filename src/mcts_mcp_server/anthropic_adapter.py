@@ -141,7 +141,6 @@ class AnthropicAdapter(BaseLLMAdapter):
 
         if not processed_messages:
             self.logger.warning("No user/assistant messages to send to Anthropic for streaming. Yielding nothing.")
-            if False: yield # Must be a generator
             return
 
         self.logger.debug(f"Anthropic get_streaming_completion using model: {target_model}, system: '{system_prompt}', messages: {processed_messages}, max_tokens: {max_tokens}, kwargs: {api_kwargs}")
@@ -163,6 +162,56 @@ class AnthropicAdapter(BaseLLMAdapter):
             self.logger.error(f"Unexpected error in Anthropic get_streaming_completion: {e}")
             yield f"Error: Unexpected error during Anthropic streaming request - {type(e).__name__}: {e}"
 
+    async def classify_intent(self, text_to_classify: str, config: Dict[str, Any]) -> str:
+        """
+        Classifies user intent using the Anthropic LLM.
+        """
+        system_prompt = """You are an intent classification system. Analyze the given text and classify the user's intent into one of these categories:
+
+- ANALYZE_NEW: User wants to analyze something new or start a fresh analysis
+- CONTINUE_ANALYSIS: User wants to continue, expand, or elaborate on existing analysis
+- ASK_LAST_RUN_SUMMARY: User is asking for a summary, results, or what was found
+- ASK_PROCESS: User is asking about how the system works, methods, algorithms, or processes
+- ASK_CONFIG: User is asking about configuration, settings, or parameters
+- GENERAL_CONVERSATION: User wants casual conversation or general chat
+
+Respond with only the category name (exactly as shown above)."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Classify the intent of this text: {text_to_classify}"}
+        ]
+
+        try:
+            model = config.get("model", self.model_name)
+            max_tokens = config.get("max_tokens", 50)
+
+            result = await self.get_completion(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.1  # Low temperature for consistent classification
+            )
+
+            # Clean up the result and validate
+            intent = result.strip().upper()
+
+            # Validate the intent is one of our expected categories
+            valid_intents = {
+                "ANALYZE_NEW", "CONTINUE_ANALYSIS", "ASK_LAST_RUN_SUMMARY",
+                "ASK_PROCESS", "ASK_CONFIG", "GENERAL_CONVERSATION"
+            }
+
+            if intent not in valid_intents:
+                self.logger.warning(f"Unexpected intent classification: {intent}, defaulting to 'ANALYZE_NEW'")
+                return "ANALYZE_NEW"
+
+            return intent
+
+        except Exception as e:
+            self.logger.error(f"Error in classify_intent: {e}")
+            return "ANALYZE_NEW"  # Default fallback
+
 # Example of how to use (for testing purposes)
 async def _test_anthropic_adapter():
     logging.basicConfig(level=logging.INFO)
@@ -181,14 +230,14 @@ async def _test_anthropic_adapter():
             {"role": "system", "content": "You are a helpful assistant that provides concise answers."},
             {"role": "user", "content": "Hello, what is the capital of France?"}
         ]
-        completion = await adapter.get_completion(messages=messages_with_system)
+        completion = await adapter.get_completion(model=None, messages=messages_with_system)
         logger.info(f"Completion result (with system prompt): {completion}")
         assert "Paris" in completion
 
         logger.info("Testing AnthropicAdapter get_streaming_completion...")
         stream_messages = [{"role": "user", "content": "Write a very short poem about AI."}]
         full_streamed_response = ""
-        async for chunk in adapter.get_streaming_completion(messages=stream_messages, max_tokens=50):
+        async for chunk in adapter.get_streaming_completion(model=None, messages=stream_messages, max_tokens=50):
             logger.info(f"Stream chunk: '{chunk}'")
             full_streamed_response += chunk
         logger.info(f"Full streamed response: {full_streamed_response}")

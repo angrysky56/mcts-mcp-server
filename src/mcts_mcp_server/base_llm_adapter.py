@@ -142,6 +142,14 @@ class BaseLLMAdapter(LLMInterface, abc.ABC):
         # Basic cleaning, specific adapters might need more
         return response.strip().upper().split()[0] if response else "UNKNOWN"
 
+    async def generate_initial_analysis(self, question: str, config: Dict[str, Any]) -> str:
+        """Generates initial analysis for a given question."""
+        context = {"question": question}
+        prompt = INITIAL_PROMPT.format(**context)
+        messages = [{"role": "user", "content": prompt}]
+        model_to_use = config.get("model_name") or self._kwargs.get("model_name")
+        return await self.get_completion(model=model_to_use, messages=messages)
+
 """
 # Example usage (for testing, not part of the class itself)
 if __name__ == '__main__':

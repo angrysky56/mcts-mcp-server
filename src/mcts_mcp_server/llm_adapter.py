@@ -105,7 +105,7 @@ class LocalInferenceLLMAdapter(LLMInterface):
                 return "What if we looked at this from a holistic perspective? How do the various elements interact as a system?"
             else:
                 # Generate a generic thought for other approaches
-                return f"Let's explore a different angle: What are the practical implications of this analysis? How might it be applied in real-world contexts?"
+                return "Let's explore a different angle: What are the practical implications of this analysis? How might it be applied in real-world contexts?"
         except Exception as e:
             logger.error(f"Error in generate_thought: {e}")
             return f"Error: {str(e)}"
