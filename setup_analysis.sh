@@ -20,8 +20,7 @@ pip install rich pathlib
 
 # Backup original tools.py file
 echo "Backing up original tools.py file..."
-cp src/mcts_mcp_server/tools.py src/mcts_mcp_server/tools.py.bak.$(date +%Y%m%d%H%M%S)
-
+cp "src/mcts_mcp_server/tools.py" "src/mcts_mcp_server/tools.py.bak.$(date +%Y%m%d%H%M%S)"
 # Update tools.py with new version
 echo "Updating tools.py with new version..."
 if [ -f "src/mcts_mcp_server/tools.py.update" ]; then

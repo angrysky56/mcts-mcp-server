@@ -13,8 +13,8 @@ echo "Setting up MCTS MCP Server with UV..."
 if ! command -v uv &> /dev/null; then
     echo "UV not installed. Installing UV..."
     curl -fsSL https://astral.sh/uv/install.sh | bash
-    # Reload shell to use uv
-    source ~/.bashrc
+    # Add uv to PATH for the current script session
+    export PATH="$HOME/.uv/bin:$PATH"
 fi
 
 # Create and activate virtual environment using UV

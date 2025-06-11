@@ -6,14 +6,13 @@ set -e
 echo "Setting up improved MCTS system with analysis tools..."
 
 # Activate the virtual environment
-VENV_PATH=".venv/bin/activate"
-if [ -f "$VENV_PATH" ]; then
+if [ -f ".venv/bin/activate" ]; then
     echo "Activating virtual environment..."
-    . "$VENV_PATH"
+    . ".venv/bin/activate"
 else
     echo "Virtual environment not found. Creating a new one..."
     python -m venv .venv
-    . "$VENV_PATH"
+    . ".venv/bin/activate"
 fi
 
 # Create analysis_tools directory if it doesn't exist
@@ -31,8 +30,7 @@ pip install rich pathlib
 
 # Backup original tools.py file
 echo "Backing up original tools.py file..."
-cp src/mcts_mcp_server/tools.py src/mcts_mcp_server/tools.py.bak.$(date +%Y%m%d%H%M%S)
-
+cp "src/mcts_mcp_server/tools.py" "src/mcts_mcp_server/tools.py.bak.$(date +%Y%m%d%H%M%S)"
 # Update tools.py with new version
 echo "Updating tools.py with new version..."
 if [ -f "src/mcts_mcp_server/tools.py.update" ]; then
