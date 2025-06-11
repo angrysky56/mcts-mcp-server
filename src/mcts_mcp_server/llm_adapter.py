@@ -10,45 +10,13 @@ required by the MCTS implementation.
 import asyncio
 import re
 import logging
-from typing import List, Dict, Any, AsyncGenerator, Optional, Protocol
+from typing import List, Dict, Any, AsyncGenerator, Optional # Protocol removed as LLMInterface is imported
+from .llm_interface import LLMInterface # Import the official LLMInterface
 
 logger = logging.getLogger("llm_adapter")
 
 
-class LLMInterface(Protocol):
-    """Protocol for the LLM interface required by MCTS."""
-
-    async def get_completion(self, model: str, messages: List[Dict[str, str]], **kwargs) -> str:
-        """Gets a non-streaming completion from the LLM."""
-        ...
-
-    async def get_streaming_completion(self, model: str, messages: List[Dict[str, str]], **kwargs) -> AsyncGenerator[str, None]:
-        """Gets a streaming completion from the LLM."""
-        ...
-
-    async def generate_thought(self, context: Dict[str, Any], config: Dict[str, Any]) -> str:
-        """Generates a critical thought or new direction based on context."""
-        ...
-
-    async def update_analysis(self, critique: str, context: Dict[str, Any], config: Dict[str, Any]) -> str:
-        """Revises analysis based on critique and context."""
-        ...
-
-    async def evaluate_analysis(self, analysis_to_evaluate: str, context: Dict[str, Any], config: Dict[str, Any]) -> int:
-        """Evaluates analysis quality (1-10 score)."""
-        ...
-
-    async def generate_tags(self, analysis_text: str, config: Dict[str, Any]) -> List[str]:
-        """Generates keyword tags for the analysis."""
-        ...
-
-    async def synthesize_result(self, context: Dict[str, Any], config: Dict[str, Any]) -> str:
-        """Generates a final synthesis based on the MCTS results."""
-        ...
-
-    async def classify_intent(self, text_to_classify: str, config: Dict[str, Any]) -> str:
-        """Classifies user intent using the LLM."""
-        ...
+# LLMInterface protocol definition removed from here
 
 class LocalInferenceLLMAdapter(LLMInterface):
     """

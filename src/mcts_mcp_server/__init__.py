@@ -28,10 +28,18 @@ from .intent_handler import (
     INTENT_CLASSIFIER_PROMPT
 )
 from .llm_interface import LLMInterface # Moved from mcts_core
-from .mcts_core import MCTS, MCTSResult # LLMInterface moved
+from .mcts_core import MCTS, MCTSResult # LLMInterface moved to llm_interface.py
 
-# For Ollama related utilities, if they are meant to be public
-from .ollama_utils import OLLAMA_AVAILABLE, OllamaAdapter, check_available_models, get_recommended_models, DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL
+# LLM Adapters and Interface
+from .llm_interface import LLMInterface
+from .base_llm_adapter import BaseLLMAdapter
+from .ollama_adapter import OllamaAdapter
+from .openai_adapter import OpenAIAdapter
+from .anthropic_adapter import AnthropicAdapter
+from .gemini_adapter import GeminiAdapter
+
+# For Ollama specific utilities
+from .ollama_utils import OLLAMA_PYTHON_PACKAGE_AVAILABLE, check_available_models, get_recommended_models
 
 __all__ = [
     'MCTS', 'LLMInterface', 'Node', 'StateManager', 'IntentHandler', 'IntentResult', 'MCTSResult',
@@ -39,7 +47,9 @@ __all__ = [
     'setup_logger', 'truncate_text', 'calculate_semantic_distance', '_summarize_text', 'SKLEARN_AVAILABLE',
     'INITIAL_PROMPT', 'THOUGHTS_PROMPT', 'UPDATE_PROMPT', 'EVAL_ANSWER_PROMPT',
     'TAG_GENERATION_PROMPT', 'FINAL_SYNTHESIS_PROMPT', 'INTENT_CLASSIFIER_PROMPT',
-    'OLLAMA_AVAILABLE', 'OllamaAdapter', 'check_available_models', 'get_recommended_models', 'OLLAMA_DEFAULT_MODEL'
+    'BaseLLMAdapter', 'OllamaAdapter', 'OpenAIAdapter', 'AnthropicAdapter', 'GeminiAdapter',
+    'OLLAMA_PYTHON_PACKAGE_AVAILABLE', 'check_available_models', 'get_recommended_models'
+    # OLLAMA_DEFAULT_MODEL was removed as each adapter has its own default.
 ]
 
 __version__ = "0.1.0"

@@ -7,3 +7,7 @@ mcp-server
 fastmcp
 ollama
 httpx
+python-dotenv
+openai
+anthropic
+google-generativeai

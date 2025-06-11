@@ -18,83 +18,37 @@ from typing import List, Dict, Any # Optional was unused
 # Setup logger for this module
 logger = logging.getLogger(__name__)
 
-# --- Ollama Adapter Import Logic (copied from tools.py) ---
-OLLAMA_AVAILABLE = False
-OllamaAdapter = None # Placeholder
-
-# Add all possible import paths
-current_dir_ollama_utils = os.path.dirname(os.path.abspath(__file__))
-if current_dir_ollama_utils not in sys.path:
-    sys.path.append(current_dir_ollama_utils)
-
-# Strategy 1: Direct module import
+# Check if the 'ollama' Python package is installed.
+# This is different from OllamaAdapter availability.
+OLLAMA_PYTHON_PACKAGE_AVAILABLE = False
 try:
-    from ollama_adapter import OllamaAdapter
-    OLLAMA_AVAILABLE = True
-    logger.info("Successfully imported OllamaAdapter (direct) in ollama_utils")
-except ImportError as e:
-    logger.debug(f"Failed direct import of OllamaAdapter in ollama_utils: {e}")
-    # Strategy 2: Package import (assuming ollama_adapter might be in the same package)
-    try:
-        from .ollama_adapter import OllamaAdapter # Relative import if in the same package
-        OLLAMA_AVAILABLE = True
-        logger.info("Successfully imported OllamaAdapter (package relative) in ollama_utils")
-    except ImportError as e_pkg:
-        logger.debug(f"Failed package relative import of OllamaAdapter in ollama_utils: {e_pkg}")
-        # Strategy 3: Manual module loading (if ollama_adapter.py is alongside this file)
-        try:
-            adapter_path = os.path.join(current_dir_ollama_utils, "ollama_adapter.py")
-            if os.path.exists(adapter_path):
-                spec = importlib.util.spec_from_file_location("ollama_adapter", adapter_path)
-                if spec and spec.loader:
-                    ollama_adapter_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(ollama_adapter_module)
-                    OllamaAdapter = ollama_adapter_module.OllamaAdapter
-                    OLLAMA_AVAILABLE = True
-                    logger.info("Successfully imported OllamaAdapter (manual load) in ollama_utils")
-                else:
-                    logger.debug(f"Manual load spec invalid for {adapter_path}")
-            else:
-                logger.debug(f"Adapter file not found at {adapter_path} for manual load")
-        except Exception as e_man:
-            logger.debug(f"Failed manual import of OllamaAdapter in ollama_utils: {e_man}")
-
-if not OLLAMA_AVAILABLE:
-    logger.warning("OllamaAdapter could not be imported in ollama_utils. Ollama features will be unavailable.")
-    class OllamaAdapterPlaceholder: # Define a placeholder if import fails
-        def __init__(self, *args, **kwargs):
-            logger.error("OllamaAdapterPlaceholder is being used because OllamaAdapter failed to load.")
-            raise ImportError("OllamaAdapter could not be loaded.")
-    OllamaAdapter = OllamaAdapterPlaceholder
-
-# Force Ollama availability check (runtime check for ollama package itself)
-if OLLAMA_AVAILABLE:
-    try:
-        import ollama
-        ollama_version = getattr(ollama, "__version__", "unknown")
-        logger.info(f"Ollama package version: {ollama_version} (checked in ollama_utils)")
-    except ImportError as e:
-        logger.warning(f"Ollama package not available despite adapter import: {e} (in ollama_utils)")
-        OLLAMA_AVAILABLE = False # Correctly set if 'import ollama' fails
-    except Exception as e:
-        logger.warning(f"Error testing Ollama package: {e} (in ollama_utils)")
-        OLLAMA_AVAILABLE = False
+    import ollama # type: ignore
+    OLLAMA_PYTHON_PACKAGE_AVAILABLE = True
+    logger.info(f"Ollama python package version: {getattr(ollama, '__version__', 'unknown')}")
+except ImportError:
+    logger.info("Ollama python package not found. Some features of check_available_models might be limited.")
+except Exception as e:
+    logger.warning(f"Error importing or checking ollama package version: {e}")
 
 
-# --- Model Constants (copied from tools.py) ---
+# --- Model Constants for get_recommended_models ---
 SMALL_MODELS = ["qwen3:0.6b", "deepseek-r1:1.5b", "cogito:latest", "phi3:mini", "tinyllama", "phi2:2b", "qwen2:1.5b"]
 MEDIUM_MODELS = ["mistral:7b", "llama3:8b", "gemma:7b", "mistral-nemo:7b"]
-DEFAULT_MODEL = "qwen3:0.6b"
+# DEFAULT_MODEL for an adapter is now defined in the adapter itself.
 
-# --- Functions (copied and adapted from tools.py) ---
+# --- Functions ---
 
 def check_available_models() -> List[str]:
     """Check which Ollama models are available locally. Returns a list of model names."""
-    if not OLLAMA_AVAILABLE:
-        logger.warning("Ollama is not available, can't check models (ollama_utils)")
-        return []
+    # This function no longer relies on a global OLLAMA_AVAILABLE specific to the adapter,
+    # but can use OLLAMA_PYTHON_PACKAGE_AVAILABLE for its 'ollama' package dependent part.
+    # The primary check is if the Ollama server is running.
+    # This function no longer relies on a global OLLAMA_AVAILABLE specific to the adapter,
+    # but can use OLLAMA_PYTHON_PACKAGE_AVAILABLE for its 'ollama' package dependent part.
+    # The primary check is if the Ollama server is running.
 
     try:
+        # Use httpx for the initial server health check, as it's a direct dependency of this file.
         client = httpx.Client(base_url="http://localhost:11434", timeout=3.0)
         response = client.get("/")
         if response.status_code != 200:
@@ -148,11 +102,11 @@ def check_available_models() -> List[str]:
         logger.warning(f"HTTP API for Ollama models failed: {e} (ollama_utils)")
 
     # Method 3: Ollama package (if subprocess and API failed)
-    # This is often redundant if OLLAMA_AVAILABLE is true, but acts as another fallback.
-    if OLLAMA_AVAILABLE: # Check again, as it might have been set to False by earlier checks
+    if OLLAMA_PYTHON_PACKAGE_AVAILABLE:
         try:
-            import ollama
-            models_response = ollama.list() # This might return a more complex object
+            # This import is already tried at the top, but to be safe if logic changes:
+            import ollama # type: ignore
+            models_response = ollama.list()
 
             package_models = []
             if hasattr(models_response, 'models') and hasattr(models_response.models, '__iter__'): # Modern ollama package
