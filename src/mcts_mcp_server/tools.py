@@ -10,73 +10,30 @@ import asyncio
 import json
 import logging
 import datetime
+import os # Added for os.getenv
+from dotenv import load_dotenv # Added for .env loading
 from typing import Dict, Any, Optional, List
 
 from mcp.server.fastmcp import FastMCP
 from llm_adapter import DirectMcpLLMAdapter
 
-# Try several import strategies to ensure we can import the Ollama adapter
-import sys
-import os
-import importlib.util
-
-# Add all possible import paths
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-
-# Try different import strategies
-OLLAMA_AVAILABLE = False
-OllamaAdapter = None
-
-# Strategy 1: Direct module import
-try:
-    from ollama_adapter import OllamaAdapter
-    OLLAMA_AVAILABLE = True
-    print("Successfully imported OllamaAdapter (direct)")
-except ImportError as e:
-    print(f"Failed direct import: {e}")
-    
-    # Strategy 2: Package import
-    try:
-        from mcts_mcp_server.ollama_adapter import OllamaAdapter
-        OLLAMA_AVAILABLE = True
-        print("Successfully imported OllamaAdapter (package)")
-    except ImportError as e:
-        print(f"Failed package import: {e}")
-        
-        # Strategy 3: Manual module loading
-        try:
-            adapter_path = os.path.join(current_dir, "ollama_adapter.py")
-            if os.path.exists(adapter_path):
-                spec = importlib.util.spec_from_file_location("ollama_adapter", adapter_path)
-                ollama_adapter = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(ollama_adapter)
-                OllamaAdapter = ollama_adapter.OllamaAdapter
-                OLLAMA_AVAILABLE = True
-                print("Successfully imported OllamaAdapter (manual load)")
-            else:
-                print(f"Adapter file not found at {adapter_path}")
-        except Exception as e:
-            print(f"Failed manual import: {e}")
-
-# Force Ollama availability check
-if OLLAMA_AVAILABLE:
-    try:
-        import ollama
-        # Test if the package works
-        ollama_version = getattr(ollama, "__version__", "unknown")
-        print(f"Ollama package version: {ollama_version}")
-    except ImportError as e:
-        print(f"Ollama package not available: {e}")
-        OLLAMA_AVAILABLE = False
-    except Exception as e:
-        print(f"Error testing Ollama package: {e}")
+from .ollama_utils import (
+    OLLAMA_PYTHON_PACKAGE_AVAILABLE, # Renamed, reflects if 'ollama' python package is installed
+    # OllamaAdapter moved to its own file
+    # SMALL_MODELS,
+    # MEDIUM_MODELS,
+    # DEFAULT_MODEL was removed from ollama_utils
+    check_available_models,
+    get_recommended_models
+)
+from .ollama_adapter import OllamaAdapter # Import new OllamaAdapter
 
 # Import from the MCTS core implementation
-from mcts_core import (
-    MCTS, StateManager, DEFAULT_CONFIG, truncate_text
-)
+# Make sure these imports are correct based on previous refactorings
+from .mcts_core import MCTS # MCTS uses DEFAULT_CONFIG, APPROACH_TAXONOMY, APPROACH_METADATA internally
+from .state_manager import StateManager
+from .mcts_config import DEFAULT_CONFIG # For MCTS and general tool use
+from .utils import truncate_text # For get_mcts_status
 
 # Import the results collector
 try:
@@ -94,23 +51,20 @@ except ImportError:
     ANALYSIS_TOOLS_AVAILABLE = False
     register_mcts_analysis_tools = None
 
-logger = logging.getLogger(".tools")
-
-# Model preferences by size for more flexible selection
-SMALL_MODELS = ["qwen3:0.6b", "deepseek-r1:1.5b", "cogito:latest", "phi3:mini", "tinyllama", "phi2:2b", "qwen2:1.5b"]
-MEDIUM_MODELS = ["mistral:7b", "llama3:8b", "gemma:7b", "mistral-nemo:7b"]
-DEFAULT_MODEL = "qwen3:0.6b"  # Initial default but will be dynamically set
+logger = logging.getLogger(__name__) # Changed to __name__ for consistency
 
 # Global state to maintain between tool calls
 _global_state = {
     "mcts_instance": None,
-    "config": None,
+    "config": None, # Will be initialized with DEFAULT_CONFIG from mcts_config.py
     "state_manager": None,
     "current_chat_id": None,
-    "ollama_model": DEFAULT_MODEL,  # Default to a small, fast model
-    "collect_results": COLLECTOR_AVAILABLE,  # Flag to collect results
-    "current_run_id": None,  # Current run ID for results collection
-    "available_models": []  # Will be populated with actual models from Ollama
+    "active_llm_provider": os.getenv("DEFAULT_LLM_PROVIDER", "ollama"),
+    # DEFAULT_MODEL_NAME from .env, or None. Provider-specific defaults handled in initialize_mcts.
+    "active_model_name": os.getenv("DEFAULT_MODEL_NAME"),
+    "collect_results": COLLECTOR_AVAILABLE,
+    "current_run_id": None,
+    "ollama_available_models": [] # Specifically for Ollama, populated by check_available_models
 }
 
 def run_async(coro):
@@ -152,240 +106,7 @@ def run_async(coro):
 
     return result
 
-def check_available_models():
-    """Check which Ollama models are available locally."""
-    global _global_state
-    
-    if not OLLAMA_AVAILABLE:
-        logger.warning("Ollama is not available, can't check models")
-        return []
-    
-    # First check if Ollama server is running by making a simple request to the health endpoint
-    try:
-        import httpx
-        client = httpx.Client(base_url="http://localhost:11434", timeout=3.0)
-        response = client.get("/")
-        
-        if response.status_code != 200:
-            logger.error(f"Ollama server health check failed with status code: {response.status_code}")
-            return []
-        
-        logger.info("Ollama server is running and responding to requests")
-    except Exception as e:
-        logger.error(f"Ollama server health check failed: {e}")
-        logger.error("Ollama server might not be running. Please start it with 'ollama serve'")
-        return []
-    
-    # Method 1: Try subprocess call first (most reliable)
-    try:
-        import subprocess
-        import sys
-        
-        # On Windows, we need to use different command arguments
-        if sys.platform == 'win32':
-            result = subprocess.run(['ollama.exe', 'list'], capture_output=True, text=True, check=False)
-        else:
-            result = subprocess.run(['ollama', 'list'], capture_output=True, text=True, check=False)
-        
-        # Check for errors
-        if result.returncode != 0:
-            logger.warning(f"Ollama list command failed with code {result.returncode}: {result.stderr}")
-            # Continue to next method
-        else:
-            lines = result.stdout.strip().split('\n')
-            
-            # Debug the raw output
-            logger.info(f"Raw ollama list output: {result.stdout}")
-            
-            # Skip the header line if present
-            if len(lines) > 1 and "NAME" in lines[0] and "ID" in lines[0]:
-                lines = lines[1:]
-            
-            # Extract model names
-            models = []
-            for line in lines:
-                if not line.strip():
-                    continue
-                parts = line.split()
-                if parts:
-                    model_name = parts[0]
-                    if ':' not in model_name:
-                        model_name += ':latest'
-                    models.append(model_name)
-            
-            if models:
-                logger.info(f"Available Ollama models via subprocess: {models}")
-                # Update global state
-                _global_state["available_models"] = models
-                return models
-            else:
-                logger.warning("Subprocess method found no models from valid response")
-    except Exception as e:
-        logger.warning(f"Subprocess method failed: {e}")
-        import traceback
-        logger.warning(traceback.format_exc())
-    
-    # Method 2: Use HTTP API
-    try:
-        import httpx
-        client = httpx.Client(base_url="http://localhost:11434", timeout=5.0)
-        response = client.get("/api/tags")
-        
-        # Debug the raw response
-        logger.info(f"HTTP API response status: {response.status_code}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"HTTP API raw response: {data}")
-            
-            models = data.get("models", [])
-            model_names = [m.get("name") for m in models if m.get("name")]
-            
-            if model_names:
-                logger.info(f"Available Ollama models via HTTP API: {model_names}")
-                # Update global state
-                _global_state["available_models"] = model_names
-                return model_names
-            else:
-                logger.warning("HTTP API returned data but no models could be extracted")
-        else:
-            logger.warning(f"Failed to get models from Ollama API: {response.status_code}")
-    except Exception as e:
-        logger.warning(f"HTTP API method failed: {e}")
-        import traceback
-        logger.warning(traceback.format_exc())
-    
-    # Method 3: Try ollama package
-    try:
-        import ollama
-        
-        # Get models directly with error handling
-        try:
-            logger.info("Attempting to get models via ollama package...")
-            models_data = ollama.list()
-            
-            # Debug log the raw response
-            logger.info(f"Ollama package response type: {type(models_data)}")
-            logger.info(f"Ollama package raw response: {models_data}")
-            
-            # Handle different response types
-            model_names = []
-            
-            # Current Ollama package format (tested with version 0.4.8)
-            if hasattr(models_data, 'models') and hasattr(models_data.models, '__iter__'):
-                # Process Pydantic models from the modern API
-                for model in models_data.models:
-                    # Fix for the new Ollama API format
-                    if hasattr(model, 'model'):
-                        model_name = model.model
-                        model_names.append(model_name)
-                        logger.info(f"Found model via 'model' attribute: {model_name}")
-                    elif hasattr(model, 'name'):
-                        model_name = model.name  
-                        model_names.append(model_name)
-                        logger.info(f"Found model via 'name' attribute: {model_name}")
-                    # Print debug info
-                    logger.info(f"Model attributes: {dir(model)}")
-            
-            # Older dictionary format
-            elif isinstance(models_data, dict) and "models" in models_data:
-                for model in models_data["models"]:
-                    if isinstance(model, dict) and "name" in model:
-                        model_names.append(model["name"])
-            
-            # Direct list format
-            elif isinstance(models_data, list):
-                for model in models_data:
-                    if isinstance(model, dict) and "name" in model:
-                        model_names.append(model["name"])
-                    elif hasattr(model, 'name'):
-                        model_names.append(model.name)
-                    else:
-                        # Last resort - convert to string
-                        model_string = str(model)
-                        logger.info(f"Converting model to string: {model_string}")
-                        model_names.append(model_string)
-            
-            if model_names:
-                logger.info(f"Ollama package found {len(model_names)} models: {model_names}")
-                _global_state["available_models"] = model_names
-                return model_names
-            else:
-                logger.warning("Ollama package returned data but no models could be extracted")
-        except Exception as e:
-            logger.warning(f"Error processing Ollama response: {e}")
-            import traceback
-            logger.warning(traceback.format_exc())
-    except ImportError as e:
-        logger.warning(f"Ollama package import failed: {e}")
-    except Exception as e:
-        logger.warning(f"Ollama package method unexpected error: {e}")
-    
-    # Method 4: Direct file system check (last resort)
-    try:
-        import os
-        import glob
-        
-        # Try to find models in common Ollama directories
-        ollama_dirs = [
-            os.path.expanduser("~/.ollama/models"),  # Linux/Mac
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "ollama", "models"),  # Windows
-        ]
-        
-        for directory in ollama_dirs:
-            if os.path.exists(directory):
-                logger.info(f"Checking Ollama models directory: {directory}")
-                model_files = glob.glob(os.path.join(directory, "*/")) + glob.glob(os.path.join(directory, "*/**/"))
-                
-                models = []
-                for model_path in model_files:
-                    model_name = os.path.basename(os.path.normpath(model_path))
-                    if model_name and not model_name.startswith('.'):
-                        if ':' not in model_name:
-                            model_name += ':latest'
-                        models.append(model_name)
-                
-                if models:
-                    logger.info(f"Found models in directory {directory}: {models}")
-                    _global_state["available_models"] = models
-                    return models
-    except Exception as e:
-        logger.warning(f"File system check failed: {e}")
-    
-    # Extra fallback: Check if there are any common models that might be available
-    logger.warning("All methods to detect Ollama models failed. Using hardcoded fallback list.")
-    
-    # Last resort - try some common model names as a fallback
-    fallback_models = ["qwen3:0.6b", "cogito:latest", "deepseek-r1:1.5b", "phi4:latest"]
-    _global_state["available_models"] = fallback_models
-    return fallback_models
-
-
-def get_recommended_models(models):
-    """Get a list of recommended models from available models, categorized by size."""
-    small_recs = []
-    medium_recs = []
-    other_models = []
-    
-    # Find small models
-    for model in SMALL_MODELS:
-        if model in models:
-            small_recs.append(model)
-            
-    # Find medium models
-    for model in MEDIUM_MODELS:
-        if model in models:
-            medium_recs.append(model)
-    
-    # Any other models
-    other_models = [m for m in models if m not in small_recs and m not in medium_recs]
-    
-    return {
-        "small_models": small_recs,
-        "medium_models": medium_recs,
-        "other_models": other_models,
-        "all_models": models
-    }
+# check_available_models and get_recommended_models moved to ollama_utils.py
 
 def register_mcts_tools(mcp: FastMCP, db_path: str):
     """
@@ -397,18 +118,28 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
     """
     global _global_state
 
+    # Load environment variables from .env file
+    load_dotenv()
+
     # Initialize state manager for persistence
     _global_state["state_manager"] = StateManager(db_path)
 
-    # Initialize config with defaults
+    # Initialize config with defaults from mcts_config.py
     _global_state["config"] = DEFAULT_CONFIG.copy()
     
-    # Check available models
-    check_available_models()
+    # Populate available models from ollama_utils
+    _global_state["ollama_available_models"] = check_available_models()
+    if not _global_state["ollama_available_models"]:
+        logger.warning("No Ollama models detected by ollama_utils.check_available_models(). Ollama provider might not function correctly if selected.")
+
+    # Set a provider-specific default model if active_model_name is None AND current provider is ollama
+    if _global_state["active_llm_provider"] == "ollama" and not _global_state["active_model_name"]:
+        _global_state["active_model_name"] = OllamaAdapter.DEFAULT_MODEL # Use class default
 
     # Register the analysis tools if available
     if ANALYSIS_TOOLS_AVAILABLE:
         # Get the results directory path
+        # Ensure os is imported if not already: import os
         repo_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         results_dir = os.path.join(repo_dir, "results")
         
@@ -417,23 +148,32 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         logger.info("Registered MCTS analysis tools")
 
     @mcp.tool()
-    def initialize_mcts(question: str, chat_id: str, model_name: Optional[str] = None, config_updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def initialize_mcts(question: str, chat_id: str, provider_name: Optional[str] = None, model_name: Optional[str] = None, config_updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Initialize the MCTS system with a new question.
+        Initialize the MCTS system with a new question, LLM provider, and model.
 
         Args:
-            question: The question or text to analyze
-            chat_id: Unique identifier for the chat session
-            model_name: Specific Ollama model to use (required)
-            config_updates: Optional dictionary of configuration updates
+            question: The question or text to analyze.
+            chat_id: Unique identifier for the chat session.
+            provider_name: Name of the LLM provider (e.g., "ollama", "openai", "anthropic", "gemini").
+                           Defaults to DEFAULT_LLM_PROVIDER from .env or "ollama".
+            model_name: Specific model name for the provider. Defaults to DEFAULT_MODEL_NAME from .env or provider-specific default.
+            config_updates: Optional dictionary of configuration updates.
 
         Returns:
-            Dictionary with initialization status and initial analysis
+            Dictionary with initialization status and initial analysis.
         """
         global _global_state
+        llm_adapter = None # Initialize llm_adapter to None
 
         try:
             logger.info(f"Initializing MCTS for chat ID: {chat_id}")
+
+            # Determine target provider and model
+            target_provider = provider_name or _global_state["active_llm_provider"]
+            target_model = model_name or _global_state["active_model_name"] # This could be None if not in .env
+
+            logger.info(f"Attempting to use LLM Provider: {target_provider}, Model: {target_model}")
 
             # Update config if provided
             if config_updates:
@@ -443,232 +183,135 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             else:
                 cfg = _global_state["config"]
 
-            # Store chat ID for state persistence
             _global_state["current_chat_id"] = chat_id
-
-            # Try to load previous state
             state_manager = _global_state["state_manager"]
-            loaded_state = None
-            if cfg.get("enable_state_persistence", True):
-                loaded_state = state_manager.load_state(chat_id)
-                if loaded_state:
-                    logger.info(f"Loaded previous state for chat ID: {chat_id}")
-                else:
-                    logger.info(f"No previous state found for chat ID: {chat_id}")
+            loaded_state = state_manager.load_state(chat_id) if cfg.get("enable_state_persistence", True) else None
+            if loaded_state: logger.info(f"Loaded previous state for chat ID: {chat_id}")
+            else: logger.info(f"No previous state found for chat ID: {chat_id}")
 
-            # Initialize the LLM adapter - ALWAYS use Ollama
-            logger.info("Initializing LLM adapter...")
-            
-            # Get available Ollama models
-            available_models = check_available_models()
-            
-            if not available_models:
-                return {
-                    "error": "No Ollama models available. Please ensure Ollama is running and has models installed.",
-                    "status": "error"
-                }
-            
-            # If user specified a model, try to use it
-            if model_name:
-                if model_name in available_models:
-                    _global_state["ollama_model"] = model_name
-                    logger.info(f"Using user-specified model: {model_name}")
-                else:
-                    # Try to find a model with the same base name
-                    model_base = model_name.split(':')[0]
-                    matching_models = [m for m in available_models if m.startswith(model_base + ':')]
-                    
-                    if matching_models:
-                        model_name = matching_models[0]
-                        _global_state["ollama_model"] = model_name
-                        logger.info(f"Found similar model: {model_name}")
-                    else:
-                        return {
-                            "status": "model_required",
-                            "error": f"Model '{model_name}' not found in available models.",
-                            "available_models": available_models,
-                            "message": "Please select one of the available models"
-                        }
-            elif not _global_state.get("ollama_model"):
-                # No model specified and none previously set
-                return {
-                    "status": "model_required",
-                    "available_models": available_models,
-                    "message": "Please specify a model to use for MCTS analysis",
-                    "action_required": "Use model_name parameter or set_ollama_model() first"
-                }
-            
-            # Make sure we have a selected model that exists
-            model_name = _global_state["ollama_model"]
-            if model_name not in available_models:
-                return {
-                    "status": "model_required",
-                    "error": f"Selected model '{model_name}' is not available",
-                    "available_models": available_models,
-                    "message": "Please select an available model"
-                }
-            
-            # Always try to use Ollama first
-            logger.info(f"Using OllamaAdapter with model {model_name}")
+            # Instantiate the appropriate adapter
+            if target_provider == "ollama":
+                # OllamaAdapter might need specific checks like check_available_models
+                if not target_model: target_model = OllamaAdapter.DEFAULT_MODEL # Use class default if still None
+                if target_model not in _global_state["ollama_available_models"]: # Check against list for this provider
+                    return {
+                        "status": "model_error",
+                        "error": f"Ollama model '{target_model}' not in available list: {_global_state['ollama_available_models']}",
+                        "message": "Please select an available Ollama model or ensure it is pulled."
+                    }
+                llm_adapter = OllamaAdapter(model_name=target_model)
+            elif target_provider == "openai":
+                from .openai_adapter import OpenAIAdapter
+                if not target_model: target_model = OpenAIAdapter.DEFAULT_MODEL
+                llm_adapter = OpenAIAdapter(api_key=os.getenv("OPENAI_API_KEY"), model_name=target_model)
+            elif target_provider == "anthropic":
+                from .anthropic_adapter import AnthropicAdapter
+                if not target_model: target_model = AnthropicAdapter.DEFAULT_MODEL
+                llm_adapter = AnthropicAdapter(api_key=os.getenv("ANTHROPIC_API_KEY"), model_name=target_model)
+            elif target_provider == "gemini":
+                from .gemini_adapter import GeminiAdapter
+                if not target_model: target_model = GeminiAdapter.DEFAULT_MODEL
+                llm_adapter = GeminiAdapter(api_key=os.getenv("GEMINI_API_KEY"), model_name=target_model)
+            else:
+                return {"error": f"Unsupported LLM provider: {target_provider}. Supported: ollama, openai, anthropic, gemini.", "status": "error"}
+
+            _global_state["active_llm_provider"] = target_provider
+            _global_state["active_model_name"] = target_model
+            logger.info(f"Successfully initialized LLM adapter for Provider: {target_provider}, Model: {target_model}")
+
+            # Test adapter (optional, can be removed for speed)
             try:
-                llm_adapter = OllamaAdapter(model_name=model_name, mcp_server=mcp)
+                async def test_adapter_briefly():
+                    return await llm_adapter.get_completion(model=target_model, messages=[{"role": "user", "content": "Brief test query."}])
+                test_result = run_async(test_adapter_briefly())
+                logger.info(f"Adapter test successful: {truncate_text(test_result, 50)}")
             except Exception as e:
-                # Only use the fallback adapter if Ollama fails completely
-                logger.error(f"Failed to initialize Ollama adapter: {e}")
-                logger.info("Using DirectMcpLLMAdapter as fallback")
-                llm_adapter = DirectMcpLLMAdapter(mcp)
-
-            # Test the adapter with a simple query
-            try:
-                async def test_adapter():
-                    test_result = await llm_adapter.get_completion(None, [{"role": "user", "content": "Test message"}])
-                    return test_result
-
-                run_async(test_adapter())
-                logger.info("LLM adapter working properly")
-            except Exception as e:
-                logger.warning(f"Error testing LLM adapter: {e}. Using default LocalInferenceLLMAdapter.")
-                from llm_adapter import LocalInferenceLLMAdapter
-                llm_adapter = LocalInferenceLLMAdapter()
+                logger.error(f"Failed to test LLM adapter for {target_provider} model {target_model}: {e}", exc_info=True)
+                # If adapter test fails, it's a significant issue. Let the error propagate or return specific error.
+                # Removing the DirectMcpLLMAdapter fallback here as 'mcp' is not in local scope
+                # and primary adapter initialization errors (e.g. API keys) are caught by ValueError.
+                return {"error": f"LLM adapter for {target_provider} failed test: {e}", "status": "adapter_test_error"}
 
             # Generate initial analysis
-            logger.info("Generating initial analysis...")
-            initial_prompt = f"<instruction>Provide an initial analysis and interpretation of the core themes, arguments, and potential implications presented. Identify key concepts. Respond with clear, natural language text ONLY.</instruction><question>{question}</question>"
-            initial_messages = [{"role": "user", "content": initial_prompt}]
+            initial_prompt_format = "<instruction>Provide an initial analysis and interpretation of the core themes, arguments, and potential implications presented. Identify key concepts. Respond with clear, natural language text ONLY.</instruction><question>{question}</question>"
+            initial_messages = [{"role": "user", "content": initial_prompt_format.format(question=question)}]
 
-            # Call LLM for initial analysis (synchronously)
-            async def get_initial_analysis():
-                return await llm_adapter.get_completion(None, initial_messages)
+            initial_analysis = run_async(llm_adapter.get_completion(model=target_model, messages=initial_messages))
 
-            initial_analysis = run_async(get_initial_analysis())
-
-            # Initialize MCTS
-            logger.info("Creating MCTS instance...")
-            async def init_mcts():
-                return MCTS(
-                    llm_interface=llm_adapter,
-                    question=question,
-                    initial_analysis_content=initial_analysis,
-                    config=cfg,
-                    initial_state=loaded_state
-                )
-
-            _global_state["mcts_instance"] = run_async(init_mcts())
+            _global_state["mcts_instance"] = MCTS(
+                llm_interface=llm_adapter,
+                question=question,
+                initial_analysis_content=initial_analysis,
+                config=cfg,
+                initial_state=loaded_state
+            )
             
-            # Start collecting results if enabled
             if _global_state["collect_results"] and COLLECTOR_AVAILABLE:
-                current_run_id = results_collector.start_run(
-                    model_name=_global_state["ollama_model"],  # Always use Ollama model
+                _global_state["current_run_id"] = results_collector.start_run(
+                    model_name=target_model,
+                    provider=target_provider, # Add provider to results
                     question=question,
                     config=cfg
                 )
-                _global_state["current_run_id"] = current_run_id
-                logger.info(f"Started collecting results for run ID: {current_run_id}")
+                logger.info(f"Started collecting results for run ID: {_global_state['current_run_id']}")
 
-            # Return success and initial analysis
             return {
                 "status": "initialized",
                 "question": question,
                 "chat_id": chat_id,
                 "initial_analysis": initial_analysis,
                 "loaded_state": loaded_state is not None,
-                "adapter_type": "ollama",  # Always use Ollama
-                "model": _global_state["ollama_model"],
-                "config": {k: v for k, v in cfg.items() if not k.startswith("_")},  # Filter internal config
+                "provider": target_provider,
+                "model_used": target_model,
+                "config": {k: v for k, v in cfg.items() if not k.startswith("_")},
                 "run_id": _global_state.get("current_run_id")
             }
+        except ValueError as ve: # Catch API key errors specifically
+            logger.error(f"Configuration error in initialize_mcts: {ve}", exc_info=True)
+            return {"error": f"Configuration error: {str(ve)}", "status": "config_error"}
         except Exception as e:
-            logger.error(f"Error in initialize_mcts {e}")
-            return {"error": f"Failed to initialize MCTS: {str(e)}"}
+            logger.error(f"Error in initialize_mcts: {e}", exc_info=True)
+            return {"error": f"Failed to initialize MCTS: {str(e)}", "status": "error"}
 
     @mcp.tool()
-    def set_ollama_model(model_name: str) -> Dict[str, Any]:
+    def set_active_llm(provider_name: str, model_name: Optional[str] = None) -> Dict[str, Any]:
+    def set_active_llm(provider_name: str, model_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        Set the Ollama model to use for future MCTS runs.
+        Set the active LLM provider and optionally a model name for future MCTS runs.
 
         Args:
-            model_name: Name of the Ollama model (e.g., "qwen3:0.6b", "cogito:latest", etc.)
+            provider_name: Name of the LLM provider (e.g., "ollama", "openai", "anthropic", "gemini").
+            model_name: Optional specific model name for the provider. If None, provider's default will be used.
 
         Returns:
-            Status message
+            Status message.
         """
         global _global_state
+        supported_providers = ["ollama", "openai", "anthropic", "gemini"]
+        provider_name_lower = provider_name.lower()
 
-        logger.info(f"Setting Ollama model to: {model_name}")
-        
-        if not OLLAMA_AVAILABLE:
+        if provider_name_lower not in supported_providers:
             return {
                 "status": "error",
-                "message": "Ollama support is not available. Make sure ollama package is installed.",
-                "action_required": "Install the ollama Python package with 'pip install ollama'"
+                "message": f"Unsupported LLM provider: '{provider_name}'. Supported providers are: {supported_providers}"
             }
+
+        _global_state["active_llm_provider"] = provider_name_lower
         
-        # Check if Ollama server is running
-        try:
-            import httpx
-            client = httpx.Client(base_url="http://localhost:11434", timeout=3.0)
-            response = client.get("/")
-            
-            if response.status_code != 200:
-                return {
-                    "status": "error",
-                    "message": "Ollama server is not running. Please start it with 'ollama serve'",
-                    "action_required": "Start the Ollama server"
-                }
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"Cannot connect to Ollama server: {e}",
-                "action_required": "Start the Ollama server with 'ollama serve'"
-            }
+        # If a model name is provided, set it. Otherwise, it will use the provider's default or .env DEFAULT_MODEL_NAME
+        # specific to that provider during initialize_mcts.
+        _global_state["active_model_name"] = model_name
         
-        # Refresh available models
-        available_models = check_available_models()
-        
-        # If no models are detected, give more helpful message
-        if not available_models:
-            pull_command = f"ollama pull {model_name}"
-            return {
-                "status": "error",
-                "message": f"No models detected in Ollama. You may need to pull the model first.",
-                "diagnostics": {
-                    "requested_model": model_name,
-                    "available_models": "None detected"
-                },
-                "action_required": f"Run '{pull_command}' to download the model"
-            }
-        
-        # Check if model is directly available
-        if model_name in available_models:
-            _global_state["ollama_model"] = model_name
-            logger.info(f"Model '{model_name}' selected. It will be used for MCTS runs.")
-            return {
-                "status": "success", 
-                "message": f"Set Ollama model to {model_name}. It will be used in the next MCTS initialization."
-            }
-            
-        # Try partial matches (just the model name without version specification)
-        model_base = model_name.split(':')[0]
-        matching_models = [m for m in available_models if m.startswith(model_base + ':')]
-        
-        if matching_models:
-            # Found models with the same base name
-            closest_match = matching_models[0]
-            _global_state["ollama_model"] = closest_match
-            
-            return {
-                "status": "success",
-                "message": f"Model '{closest_match}' selected (similar to requested '{model_name}').",
-                "available_similar_models": matching_models
-            }
-        
-        # Model not found - suggest pulling it
-        pull_command = f"ollama pull {model_name}"
+        log_msg = f"Set active LLM provider to: {provider_name_lower}."
+        if model_name:
+            log_msg += f" Set active model to: {model_name}."
+        else:
+            log_msg += f" Active model will be provider's default or from .env DEFAULT_MODEL_NAME."
+        logger.info(log_msg)
+
         return {
-            "status": "error",
-            "message": f"Model '{model_name}' is not available and needs to be downloaded.",
-            "available_models": available_models,
-            "action_required": f"Run '{pull_command}' to download the model"
+            "status": "success",
+            "message": log_msg
         }
 
     @mcp.tool()
@@ -772,45 +415,51 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         # Get recommended models
         recommendations = get_recommended_models(available_models)
         
-        # Determine if a model is already selected
-        current_model = _global_state.get("ollama_model")
-        model_selected = current_model is not None and current_model in available_models
+        # Determine if a model is already selected (specific to Ollama for this tool)
+        current_ollama_model = _global_state.get("active_model_name") if _global_state.get("active_llm_provider") == "ollama" else None
+        if not current_ollama_model and _global_state.get("active_llm_provider") == "ollama":
+             # If provider is ollama but no model is set, try the class default for OllamaAdapter
+            current_ollama_model = OllamaAdapter.DEFAULT_MODEL
+
+        model_selected = current_ollama_model is not None and current_ollama_model in available_models
         
         # Customize message based on model selection status
         if model_selected:
-            message = f"Current model: {current_model}. Use set_ollama_model() to change."
+            message = f"Current Ollama model for 'ollama' provider: {current_ollama_model}. Use set_active_llm to change provider or model."
         else:
-            message = "Please use set_ollama_model() to select a model before running MCTS."
+            message = "To use Ollama, please use set_active_llm(provider_name='ollama', model_name='your_model') to select a model."
             
-        # Clear current model if it's not in available_models
-        if current_model and current_model not in available_models:
-            logger.warning(f"Current model {current_model} not found in available models. Clearing selection.")
-            _global_state["ollama_model"] = None
-            current_model = None
+        # Clear active_model_name if it's an Ollama model but not in the available list
+        if _global_state.get("active_llm_provider") == "ollama" and current_ollama_model and current_ollama_model not in available_models:
+            logger.warning(f"Current active model {current_ollama_model} (Ollama) not found in available models. Clearing active_model_name.")
+            _global_state["active_model_name"] = None # Will fall back to default or require setting
+            current_ollama_model = None # For the message
         
-        # Update global state with available models
-        _global_state["available_models"] = available_models
+        # Update global state with Ollama-specific available models
+        _global_state["ollama_available_models"] = available_models # Store specifically for ollama
         
         return {
             "status": "success",
-            "available_models": available_models,
-            "model_details": model_details,
-            "current_model": current_model,
-            "recommended_small_models": recommendations["small_models"],
-            "recommended_medium_models": recommendations["medium_models"],
+            "ollama_available_models": available_models, # Specifically Ollama models
+            "model_details": model_details, # Details for Ollama models
+            "current_ollama_model_for_provider": current_ollama_model, # If provider is ollama
+            "recommended_small_ollama_models": recommendations["small_models"],
+            "recommended_medium_ollama_models": recommendations["medium_models"],
             "message": message,
             "model_selected": model_selected
         }
 
     @mcp.tool()
-    def run_mcts(iterations: int = 1, simulations_per_iteration: int = 5, model_name: Optional[str] = None) -> Dict[str, Any]:
+            model_name: Optional[str] = None) -> Dict[str, Any]: # model_name here refers to the specific model for the active provider
         """
-        Run the MCTS algorithm for the specified number of iterations.
+        Run the MCTS algorithm for the specified number of iterations using the currently active LLM provider and model.
+        The model_name parameter here is currently not used, as the model is determined by initialize_mcts or set_active_llm.
+        This could be changed to allow overriding the model for a specific run if desired.
 
         Args:
             iterations: Number of MCTS iterations to run (default: 1)
             simulations_per_iteration: Number of simulations per iteration (default: 5)
-            model_name: Optional name of the Ollama model to use (e.g., "cogito:latest", "qwen3:0.6b")
+            model_name: (Currently not used, model is taken from _global_state set by initialize_mcts or set_active_llm)
 
         Returns:
             Dictionary with status message about the background run
@@ -820,43 +469,20 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         mcts = _global_state.get("mcts_instance")
         if not mcts:
             return {"error": "MCTS not initialized. Call initialize_mcts first."}
-
-        # Check if model is specified and update if needed
-        if model_name:
-            available_models = _global_state.get("available_models", [])
-            if model_name in available_models:
-                _global_state["ollama_model"] = model_name
-                logger.info(f"Using specified model: {model_name}")
-            else:
-                return {
-                    "error": f"Model '{model_name}' not found. Available models: {available_models}",
-                    "available_models": available_models,
-                    "action_required": "Please specify a valid model using set_ollama_model() or the model_name parameter"
-                }
         
-        # Check if we have a model selected
-        if not _global_state.get("ollama_model"):
-            available_models = _global_state.get("available_models", [])
-            if not available_models:
-                available_models = check_available_models()
-            
-            if not available_models:
-                return {"error": "No Ollama models available. Please check your Ollama installation."}
-            
-            return {
-                "status": "model_required",
-                "message": "Please select an Ollama model before running MCTS",
-                "available_models": available_models,
-                "action_required": "Use set_ollama_model() to select one of the available models"
-            }
+        active_provider = _global_state.get("active_llm_provider")
+        active_model = _global_state.get("active_model_name")
+
+        if not active_provider or not active_model:
+            return {"error": "Active LLM provider or model not set. Call initialize_mcts or set_active_llm first."}
 
         # Override config values for this run
         temp_config = mcts.config.copy()
         temp_config["max_iterations"] = iterations
         temp_config["simulations_per_iteration"] = simulations_per_iteration
-        mcts.config = temp_config
+        mcts.config = temp_config # This updates the config in the MCTS instance
 
-        logger.info(f"Starting MCTS background run with {iterations} iterations, {simulations_per_iteration} simulations per iteration using model {_global_state['ollama_model']}...")
+        logger.info(f"Starting MCTS background run with {iterations} iterations, {simulations_per_iteration} simulations per iteration using Provider: {active_provider}, Model: {active_model}...")
 
         # Update collector status if enabled
         if _global_state["collect_results"] and COLLECTOR_AVAILABLE and _global_state.get("current_run_id"):
@@ -866,7 +492,8 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
                 {
                     "iterations": iterations,
                     "simulations_per_iteration": simulations_per_iteration,
-                    "model": _global_state["ollama_model"],
+                    "provider": active_provider,
+                    "model": active_model,
                     "timestamp": int(datetime.datetime.now().timestamp())
                 }
             )
@@ -903,7 +530,8 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
                     "tags": tags,
                     "iterations_completed": mcts.iterations_completed,
                     "simulations_completed": mcts.simulations_completed,
-                    "model": _global_state["ollama_model"],  # Always use Ollama model
+                    "provider": _global_state.get("active_llm_provider"),
+                    "model": _global_state.get("active_model_name"),
                 }
                 
                 # Save results to collector if enabled
@@ -931,9 +559,10 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         return {
             "status": "started",
             "message": f"MCTS process started in background with {iterations} iterations and {simulations_per_iteration} simulations per iteration.",
-            "model": _global_state["ollama_model"],
+            "provider": _global_state.get("active_llm_provider"),
+            "model": _global_state.get("active_model_name"),
             "run_id": _global_state.get("current_run_id"),
-            "results_path": f"/home/ty/Repositories/ai_workspace/mcts-mcp-server/results/{_global_state['ollama_model']}_{_global_state.get('current_run_id')}",
+            "results_path": f"/home/ty/Repositories/ai_workspace/mcts-mcp-server/results/{_global_state.get('active_llm_provider')}_{_global_state.get('active_model_name')}_{_global_state.get('current_run_id')}", # Adjusted path
             "background_thread_id": background_thread.ident
         }
 
@@ -990,7 +619,8 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
                 "best_score": results.best_score,
                 "tags": tags,
                 "iterations_completed": mcts.iterations_completed,
-                "model": _global_state["ollama_model"],  # Always use Ollama model
+                "provider": _global_state.get("active_llm_provider"),
+                "model": _global_state.get("active_model_name"),
             }
 
         try:
@@ -1020,12 +650,14 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             Dictionary with the current configuration values
         """
         global _global_state
-        # Add Ollama-specific config
+        # Add active LLM provider and model info
         config = {k: v for k, v in _global_state["config"].items() if not k.startswith("_")}
         config.update({
-            "ollama_model": _global_state["ollama_model"],
-            "available_models": _global_state["available_models"],
-            "collect_results": _global_state["collect_results"],
+            "active_llm_provider": _global_state.get("active_llm_provider"),
+            "active_model_name": _global_state.get("active_model_name"),
+            "ollama_python_package_available": OLLAMA_PYTHON_PACKAGE_AVAILABLE, # For info
+            "ollama_available_models": _global_state.get("ollama_available_models", []),
+            "collect_results": _global_state.get("collect_results"),
             "current_run_id": _global_state.get("current_run_id")
         })
         return config
@@ -1033,54 +665,40 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
     @mcp.tool()
     def update_config(config_updates: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Update the MCTS configuration.
+        Update the MCTS configuration. Provider and model are updated via set_active_llm.
 
         Args:
-            config_updates: Dictionary with configuration keys and values to update
+            config_updates: Dictionary with MCTS configuration keys and values to update.
+                            To change LLM provider or model, use `set_active_llm` tool.
 
         Returns:
-            Dictionary with the updated configuration
+            Dictionary with the updated configuration.
         """
         global _global_state
 
-        logger.info(f"Updating config with: {config_updates}")
+        logger.info(f"Updating MCTS config with: {config_updates}")
         
-        if "ollama_model" in config_updates:
-            model_name = config_updates.pop("ollama_model")
-            
-            # Check if model is available
-            if not _global_state["available_models"]:
-                check_available_models()
-                
-            if model_name in _global_state["available_models"] or not _global_state["available_models"]:
-                _global_state["ollama_model"] = model_name
-            else:
-                logger.warning(f"Model {model_name} not available, keeping current model {_global_state['ollama_model']}")
-        
+        # Provider and model name changes should be handled by set_active_llm
+        if "active_llm_provider" in config_updates or "active_model_name" in config_updates:
+            logger.warning("Use 'set_active_llm' tool to change LLM provider or model name. These keys will be ignored in update_config.")
+            config_updates.pop("active_llm_provider", None)
+            config_updates.pop("active_model_name", None)
+            config_updates.pop("ollama_model", None) # old key
+
         if "collect_results" in config_updates:
             _global_state["collect_results"] = bool(config_updates.pop("collect_results"))
 
         # Update regular MCTS config
         cfg = _global_state["config"].copy()
-        cfg.update(config_updates)
+        cfg.update(config_updates) # Apply remaining valid config updates
         _global_state["config"] = cfg
 
-        # If MCTS instance exists, update its config
         mcts = _global_state.get("mcts_instance")
         if mcts:
-            mcts.config = cfg
+            mcts.config = cfg # Update config in existing MCTS instance
 
-        # Return filtered config (without private items)
-        config = {k: v for k, v in cfg.items() if not k.startswith("_")}
-        # Add Ollama-specific config
-        config.update({
-            "ollama_model": _global_state["ollama_model"],
-            "ollama_available": OLLAMA_AVAILABLE,
-            "available_models": _global_state["available_models"],
-            "collect_results": _global_state["collect_results"],
-            "current_run_id": _global_state.get("current_run_id")
-        })
-        return config
+        # Return current effective config using get_config()
+        return get_config()
 
     @mcp.tool()
     def get_mcts_status() -> Dict[str, Any]:
@@ -1115,9 +733,9 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
                 "tags": tags,
                 "tree_depth": mcts.memory.get("depth", 0) if hasattr(mcts, "memory") else 0,
                 "approach_types": getattr(mcts, "approach_types", []),
-                "adapter_type": "ollama",  # Always use Ollama
-                "model": _global_state["ollama_model"],  # Always use Ollama model
-                "collected_results": _global_state["collect_results"],
+                "active_llm_provider": _global_state.get("active_llm_provider"),
+                "active_model_name": _global_state.get("active_model_name"),
+                "collected_results": _global_state.get("collect_results"),
                 "run_id": _global_state.get("current_run_id")
             }
         except Exception as e:
@@ -1141,8 +759,9 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         Returns:
             Dictionary with the run IDs for each model
         """
-        if not OLLAMA_AVAILABLE:
-            return {"error": "Ollama is not available. Cannot run model comparison."}
+        # Use OLLAMA_PYTHON_PACKAGE_AVAILABLE to check if the package needed for check_available_models is there
+        if not OLLAMA_PYTHON_PACKAGE_AVAILABLE: # Check if the ollama python lib is there
+            return {"error": "Ollama python package not available. Cannot run Ollama model comparison."}
             
         if not COLLECTOR_AVAILABLE:
             return {"error": "Results collector is not available. Cannot track comparison results."}
@@ -1150,12 +769,15 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         # Refresh available models
         models = check_available_models()
         
-        # Filter to only include our preferred small models for faster comparison
-        preferred_models = ["qwen3:0.6b", "deepseek-r1:1.5b", "cogito:latest"]
-        comparison_models = [m for m in models if any(sm in m for sm in preferred_models)]
+        # Filter to only include our preferred small models for faster comparison using constants from ollama_utils
+        # Import SMALL_MODELS if needed here, or pass them to this function, or make get_recommended_models more flexible
+        # For now, assuming get_recommended_models in ollama_utils handles this logic
+        recommendations = get_recommended_models(models)
+        comparison_models = recommendations["small_models"] # Example: Use recommended small models
         
         if not comparison_models:
-            return {"error": f"No suitable models found. Please pull at least one of: {preferred_models}"}
+            # If no "small" models, maybe try medium or any available? For now, error out.
+            return {"error": f"No suitable Ollama models found from recommended small list for comparison. Available: {models}"}
             
         # Set up comparison config
         config = _global_state["config"].copy()

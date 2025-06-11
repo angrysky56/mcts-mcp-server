@@ -17,6 +17,7 @@ This MCP server enables Claude to use Monte Carlo Tree Search (MCTS) algorithms 
 - **Thompson Sampling**: Can use Thompson sampling or UCT for node selection
 - **Surprise Detection**: Identifies surprising or novel directions of analysis
 - **Intent Classification**: Understands when users want to start a new analysis or continue a previous one
+- **Multi-LLM Support**: Supports Ollama, OpenAI, Anthropic, and Google Gemini models.
 
 ## Usage
 
@@ -57,7 +58,7 @@ The setup uses UV (Astral UV), a faster alternative to pip that offers improved 
 This will:
 - Install UV if not already installed
 - Create a virtual environment with UV
-- Install the required packages using UV
+- Install the required packages using UV (including `openai`, `anthropic`, `google-generativeai`, and `python-dotenv`)
 - Create the necessary state directory
 
 Alternatively, you can manually set up:
@@ -76,6 +77,27 @@ source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
+## API Key Management
+
+For using LLM providers like OpenAI, Anthropic, and Google Gemini, you need to provide API keys. This server loads API keys from a `.env` file located in the root of the repository.
+
+1.  **Copy the example file**: `cp .env.example .env`
+2.  **Edit `.env`**: Open the `.env` file and replace the placeholder keys with your actual API keys:
+    ```env
+    OPENAI_API_KEY="your_openai_api_key_here"
+    ANTHROPIC_API_KEY="your_anthropic_api_key_here"
+    GEMINI_API_KEY="your_google_gemini_api_key_here"
+    ```
+3.  **Set Defaults (Optional)**: You can also set the default LLM provider and model name in the `.env` file:
+    ```env
+    # Default LLM Provider to use (e.g., "ollama", "openai", "anthropic", "gemini")
+    DEFAULT_LLM_PROVIDER="ollama"
+    # Default Model Name for the selected provider
+    DEFAULT_MODEL_NAME="cogito:latest"
+    ```
+    If these are not set, the system defaults to "ollama" and attempts to use a model like "cogito:latest" or another provider-specific default.
+
+The `.env` file is included in `.gitignore`, so your actual keys will not be committed to the repository.
 
 ## Claude Desktop Integration
 
@@ -110,32 +132,45 @@ Example configuration:
 **Make sure to update the paths** to match the location of the MCTS MCP server on your system.
 
 
-## Suggested System Prompt and **Updated** tools including Ollama integration i.e. Place the following block in your Project Instructions:
+## Suggested System Prompt and Updated tools
 
 ---
 
 ```markdown
-MCTS server and usage instructions:
+# MCTS server and usage instructions:
 
-MCTS server and usage instructions:
-list_ollama_models()  # Check what models are available
-set_ollama_model("cogito:latest")  # Set the model you want to use
-initialize_mcts(question="Your question here", chat_id="unique_id")  # Initialize analysis
-run_mcts(iterations=1, simulations_per_iteration=5)  # Run the analysis
+# List available Ollama models (if using Ollama)
+list_ollama_models()
 
-After run_mcts is called it can take wuite a long time ie minutes to hours
+# Set the active LLM provider and model
+# provider_name can be "ollama", "openai", "anthropic", "gemini"
+# model_name is specific to the provider (e.g., "cogito:latest" for ollama, "gpt-4" for openai)
+set_active_llm(provider_name="openai", model_name="gpt-3.5-turbo")
+# Or, to use defaults from .env or provider-specific defaults:
+# set_active_llm(provider_name="openai")
+
+# Initialize analysis (can also specify provider and model here to override active settings for this run)
+initialize_mcts(question="Your question here", chat_id="unique_id", provider_name="openai", model_name="gpt-4")
+# Or using the globally set active LLM:
+# initialize_mcts(question="Your question here", chat_id="unique_id")
+
+run_mcts(iterations=1, simulations_per_iteration=5)
+
+After run_mcts is called it can take quite a long time ie minutes to hours
 - so you may discuss any ideas or questions or await user confirmation of the process finishing,
 - then proceed to synthesis and analysis tools on resumption of chat.
 
 ## MCTS-MCP Tools Overview
 
 ### Core MCTS Tools:
-- `initialize_mcts`: Start a new MCTS analysis with a specific question
-- `run_mcts`: Run the MCTS algorithm for a set number of iterations/simulations
-- `generate_synthesis`: Generate a final summary of the MCTS results
-- `get_config`: View current MCTS configuration parameters
-- `update_config`: Update MCTS configuration parameters
-- `get_mcts_status`: Check the current status of the MCTS system
+- `initialize_mcts`: Start a new MCTS analysis with a specific question. Can optionally specify `provider_name` and `model_name` to override defaults for this run.
+- `run_mcts`: Run the MCTS algorithm for a set number of iterations/simulations.
+- `generate_synthesis`: Generate a final summary of the MCTS results.
+- `get_config`: View current MCTS configuration parameters, including active LLM provider and model.
+- `update_config`: Update MCTS configuration parameters (excluding provider/model, use `set_active_llm` for that).
+- `get_mcts_status`: Check the current status of the MCTS system.
+- `set_active_llm(provider_name: str, model_name: Optional[str])`: Select which LLM provider and model to use for MCTS.
+- `list_ollama_models()`: Show all available local Ollama models (if using Ollama provider).
 
 Default configuration prioritizes speed and exploration, but you can customize parameters like exploration_weight, beta_prior_alpha/beta, surprise_threshold.
 
@@ -167,14 +202,9 @@ outcome.
 
 More Iterations/Simulations: Would allow for potentially deeper convergence or exploration of more niche pathways.
 
-### Ollama Integration Tools:
-- `list_ollama_models`: Show all available local Ollama models
-- `set_ollama_model`: Select which Ollama model to use for MCTS
-- `run_model_comparison`: Run the same MCTS process across multiple models
-
 ### Results Collection:
-- Automatically stores results in `/home/ty/Repositories/ai_workspace/mcts-mcp-server/results`
-- Organizes by model name and run ID
+- Automatically stores results in `/home/ty/Repositories/ai_workspace/mcts-mcp-server/results` (path might be system-dependent or configurable)
+- Organizes by provider, model name, and run ID
 - Stores metrics, progress info, and final outputs
 
 # MCTS Analysis Tools
@@ -218,32 +248,32 @@ list_mcts_runs()
 
 # To get details about a specific run:
 
-get_mcts_run_details('cogito:latest_1745979984')
+get_mcts_run_details('ollama_cogito:latest_1745979984') # Example run_id format
 
 ### Extracting Insights
 
 # To get key insights from a run:
 
-get_mcts_insights(run_id='cogito:latest_1745979984')
+get_mcts_insights(run_id='ollama_cogito:latest_1745979984')
 
 ### Generating Reports
 
 # To generate a comprehensive markdown report:
 
-get_mcts_report(run_id='cogito:latest_1745979984', format='markdown')
+get_mcts_report(run_id='ollama_cogito:latest_1745979984', format='markdown')
 
 
 ### Improving Results
 
 # To get suggestions for improving a run:
 
-suggest_mcts_improvements(run_id='cogito:latest_1745979984')
+suggest_mcts_improvements(run_id='ollama_cogito:latest_1745979984')
 
 ### Comparing Runs
 
 To compare multiple runs:
 
-compare_mcts_runs(['cogito:latest_1745979984', 'qwen3:0.6b_1745979584'])
+compare_mcts_runs(['ollama_cogito:latest_1745979984', 'openai_gpt-3.5-turbo_1745979584']) # Example run_ids
 
 ## Understanding the Results
 
@@ -271,15 +301,15 @@ You can generate reports in different formats:
 
 # Generate a markdown report
 
-report = get_mcts_report(run_id='cogito:latest_1745979984', format='markdown')
+report = get_mcts_report(run_id='ollama_cogito:latest_1745979984', format='markdown')
 
 # Generate a text report
 
-report = get_mcts_report(run_id='cogito:latest_1745979984', format='text')
+report = get_mcts_report(run_id='ollama_cogito:latest_1745979984', format='text')
 
 # Generate an HTML report
 
-report = get_mcts_report(run_id='cogito:latest_1745979984', format='html')
+report = get_mcts_report(run_id='ollama_cogito:latest_1745979984', format='html')
 
 ### Finding the Best Runs
 
@@ -291,20 +321,31 @@ This returns the top 3 runs with a score of at least 8.0.
 
 ## Simple Usage Instructions
 
-1. **Changing Models**:
+1. **Setting the LLM Provider and Model**:
+   # For Ollama:
+   list_ollama_models()  # See available Ollama models
+   set_active_llm(provider_name="ollama", model_name="cogito:latest")
 
-   list_ollama_models()  # See available models
-   set_ollama_model("qwen3:0.6b")  # Set to fast small model
+   # For OpenAI:
+   set_active_llm(provider_name="openai", model_name="gpt-4")
+
+   # For Anthropic:
+   set_active_llm(provider_name="anthropic", model_name="claude-3-opus-20240229")
+
+   # For Gemini:
+   set_active_llm(provider_name="gemini", model_name="gemini-1.5-pro-latest")
 
 2. **Starting a New Analysis**:
-
+   # Uses the LLM set by set_active_llm, or defaults from .env
    initialize_mcts(question="Your question here", chat_id="unique_identifier")
+   # Alternatively, specify provider/model for this specific analysis:
+   # initialize_mcts(question="Your question here", chat_id="unique_identifier", provider_name="openai", model_name="gpt-4-turbo")
 
 3. **Running the Analysis**:
 
    run_mcts(iterations=3, simulations_per_iteration=10)
 
-4. **Comparing Performance**:
+4. **Comparing Performance (Ollama specific example)**:
 
    run_model_comparison(question="Your question", iterations=2)
 

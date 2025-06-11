@@ -14,7 +14,7 @@ import sys
 import signal
 import time
 import psutil
-from typing import Optional
+# from typing import Optional # Optional was not used
 
 # Add debug print for Python environment
 print(f"Python executable: {sys.executable}")
@@ -36,7 +36,7 @@ if src_dir not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 # Use proper package import
-from mcts_mcp_server.tools import register_mcts_tools
+from .tools import register_mcts_tools # Changed to relative import
 
 # Set up logging
 logging.basicConfig(
