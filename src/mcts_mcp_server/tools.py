@@ -15,68 +15,22 @@ from typing import Dict, Any, Optional, List
 from mcp.server.fastmcp import FastMCP
 from llm_adapter import DirectMcpLLMAdapter
 
-# Try several import strategies to ensure we can import the Ollama adapter
-import sys
-import os
-import importlib.util
-
-# Add all possible import paths
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-
-# Try different import strategies
-OLLAMA_AVAILABLE = False
-OllamaAdapter = None
-
-# Strategy 1: Direct module import
-try:
-    from ollama_adapter import OllamaAdapter
-    OLLAMA_AVAILABLE = True
-    print("Successfully imported OllamaAdapter (direct)")
-except ImportError as e:
-    print(f"Failed direct import: {e}")
-    
-    # Strategy 2: Package import
-    try:
-        from mcts_mcp_server.ollama_adapter import OllamaAdapter
-        OLLAMA_AVAILABLE = True
-        print("Successfully imported OllamaAdapter (package)")
-    except ImportError as e:
-        print(f"Failed package import: {e}")
-        
-        # Strategy 3: Manual module loading
-        try:
-            adapter_path = os.path.join(current_dir, "ollama_adapter.py")
-            if os.path.exists(adapter_path):
-                spec = importlib.util.spec_from_file_location("ollama_adapter", adapter_path)
-                ollama_adapter = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(ollama_adapter)
-                OllamaAdapter = ollama_adapter.OllamaAdapter
-                OLLAMA_AVAILABLE = True
-                print("Successfully imported OllamaAdapter (manual load)")
-            else:
-                print(f"Adapter file not found at {adapter_path}")
-        except Exception as e:
-            print(f"Failed manual import: {e}")
-
-# Force Ollama availability check
-if OLLAMA_AVAILABLE:
-    try:
-        import ollama
-        # Test if the package works
-        ollama_version = getattr(ollama, "__version__", "unknown")
-        print(f"Ollama package version: {ollama_version}")
-    except ImportError as e:
-        print(f"Ollama package not available: {e}")
-        OLLAMA_AVAILABLE = False
-    except Exception as e:
-        print(f"Error testing Ollama package: {e}")
+from .ollama_utils import (
+    OLLAMA_AVAILABLE,
+    OllamaAdapter,
+    # SMALL_MODELS, # Only used by get_recommended_models in ollama_utils
+    # MEDIUM_MODELS, # Only used by get_recommended_models in ollama_utils
+    DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL,
+    check_available_models,
+    get_recommended_models
+)
 
 # Import from the MCTS core implementation
-from mcts_core import (
-    MCTS, StateManager, DEFAULT_CONFIG, truncate_text
-)
+# Make sure these imports are correct based on previous refactorings
+from .mcts_core import MCTS # MCTS uses DEFAULT_CONFIG, APPROACH_TAXONOMY, APPROACH_METADATA internally
+from .state_manager import StateManager
+from .mcts_config import DEFAULT_CONFIG # For MCTS and general tool use
+from .utils import truncate_text # For get_mcts_status
 
 # Import the results collector
 try:
@@ -94,23 +48,18 @@ except ImportError:
     ANALYSIS_TOOLS_AVAILABLE = False
     register_mcts_analysis_tools = None
 
-logger = logging.getLogger(".tools")
-
-# Model preferences by size for more flexible selection
-SMALL_MODELS = ["qwen3:0.6b", "deepseek-r1:1.5b", "cogito:latest", "phi3:mini", "tinyllama", "phi2:2b", "qwen2:1.5b"]
-MEDIUM_MODELS = ["mistral:7b", "llama3:8b", "gemma:7b", "mistral-nemo:7b"]
-DEFAULT_MODEL = "qwen3:0.6b"  # Initial default but will be dynamically set
+logger = logging.getLogger(__name__) # Changed to __name__ for consistency
 
 # Global state to maintain between tool calls
 _global_state = {
     "mcts_instance": None,
-    "config": None,
+    "config": None, # Will be initialized with DEFAULT_CONFIG from mcts_config.py
     "state_manager": None,
     "current_chat_id": None,
-    "ollama_model": DEFAULT_MODEL,  # Default to a small, fast model
-    "collect_results": COLLECTOR_AVAILABLE,  # Flag to collect results
-    "current_run_id": None,  # Current run ID for results collection
-    "available_models": []  # Will be populated with actual models from Ollama
+    "ollama_model": OLLAMA_DEFAULT_MODEL,  # Use imported default
+    "collect_results": COLLECTOR_AVAILABLE,
+    "current_run_id": None,
+    "available_models": [] # Will be populated by check_available_models from ollama_utils
 }
 
 def run_async(coro):
@@ -152,240 +101,7 @@ def run_async(coro):
 
     return result
 
-def check_available_models():
-    """Check which Ollama models are available locally."""
-    global _global_state
-    
-    if not OLLAMA_AVAILABLE:
-        logger.warning("Ollama is not available, can't check models")
-        return []
-    
-    # First check if Ollama server is running by making a simple request to the health endpoint
-    try:
-        import httpx
-        client = httpx.Client(base_url="http://localhost:11434", timeout=3.0)
-        response = client.get("/")
-        
-        if response.status_code != 200:
-            logger.error(f"Ollama server health check failed with status code: {response.status_code}")
-            return []
-        
-        logger.info("Ollama server is running and responding to requests")
-    except Exception as e:
-        logger.error(f"Ollama server health check failed: {e}")
-        logger.error("Ollama server might not be running. Please start it with 'ollama serve'")
-        return []
-    
-    # Method 1: Try subprocess call first (most reliable)
-    try:
-        import subprocess
-        import sys
-        
-        # On Windows, we need to use different command arguments
-        if sys.platform == 'win32':
-            result = subprocess.run(['ollama.exe', 'list'], capture_output=True, text=True, check=False)
-        else:
-            result = subprocess.run(['ollama', 'list'], capture_output=True, text=True, check=False)
-        
-        # Check for errors
-        if result.returncode != 0:
-            logger.warning(f"Ollama list command failed with code {result.returncode}: {result.stderr}")
-            # Continue to next method
-        else:
-            lines = result.stdout.strip().split('\n')
-            
-            # Debug the raw output
-            logger.info(f"Raw ollama list output: {result.stdout}")
-            
-            # Skip the header line if present
-            if len(lines) > 1 and "NAME" in lines[0] and "ID" in lines[0]:
-                lines = lines[1:]
-            
-            # Extract model names
-            models = []
-            for line in lines:
-                if not line.strip():
-                    continue
-                parts = line.split()
-                if parts:
-                    model_name = parts[0]
-                    if ':' not in model_name:
-                        model_name += ':latest'
-                    models.append(model_name)
-            
-            if models:
-                logger.info(f"Available Ollama models via subprocess: {models}")
-                # Update global state
-                _global_state["available_models"] = models
-                return models
-            else:
-                logger.warning("Subprocess method found no models from valid response")
-    except Exception as e:
-        logger.warning(f"Subprocess method failed: {e}")
-        import traceback
-        logger.warning(traceback.format_exc())
-    
-    # Method 2: Use HTTP API
-    try:
-        import httpx
-        client = httpx.Client(base_url="http://localhost:11434", timeout=5.0)
-        response = client.get("/api/tags")
-        
-        # Debug the raw response
-        logger.info(f"HTTP API response status: {response.status_code}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"HTTP API raw response: {data}")
-            
-            models = data.get("models", [])
-            model_names = [m.get("name") for m in models if m.get("name")]
-            
-            if model_names:
-                logger.info(f"Available Ollama models via HTTP API: {model_names}")
-                # Update global state
-                _global_state["available_models"] = model_names
-                return model_names
-            else:
-                logger.warning("HTTP API returned data but no models could be extracted")
-        else:
-            logger.warning(f"Failed to get models from Ollama API: {response.status_code}")
-    except Exception as e:
-        logger.warning(f"HTTP API method failed: {e}")
-        import traceback
-        logger.warning(traceback.format_exc())
-    
-    # Method 3: Try ollama package
-    try:
-        import ollama
-        
-        # Get models directly with error handling
-        try:
-            logger.info("Attempting to get models via ollama package...")
-            models_data = ollama.list()
-            
-            # Debug log the raw response
-            logger.info(f"Ollama package response type: {type(models_data)}")
-            logger.info(f"Ollama package raw response: {models_data}")
-            
-            # Handle different response types
-            model_names = []
-            
-            # Current Ollama package format (tested with version 0.4.8)
-            if hasattr(models_data, 'models') and hasattr(models_data.models, '__iter__'):
-                # Process Pydantic models from the modern API
-                for model in models_data.models:
-                    # Fix for the new Ollama API format
-                    if hasattr(model, 'model'):
-                        model_name = model.model
-                        model_names.append(model_name)
-                        logger.info(f"Found model via 'model' attribute: {model_name}")
-                    elif hasattr(model, 'name'):
-                        model_name = model.name  
-                        model_names.append(model_name)
-                        logger.info(f"Found model via 'name' attribute: {model_name}")
-                    # Print debug info
-                    logger.info(f"Model attributes: {dir(model)}")
-            
-            # Older dictionary format
-            elif isinstance(models_data, dict) and "models" in models_data:
-                for model in models_data["models"]:
-                    if isinstance(model, dict) and "name" in model:
-                        model_names.append(model["name"])
-            
-            # Direct list format
-            elif isinstance(models_data, list):
-                for model in models_data:
-                    if isinstance(model, dict) and "name" in model:
-                        model_names.append(model["name"])
-                    elif hasattr(model, 'name'):
-                        model_names.append(model.name)
-                    else:
-                        # Last resort - convert to string
-                        model_string = str(model)
-                        logger.info(f"Converting model to string: {model_string}")
-                        model_names.append(model_string)
-            
-            if model_names:
-                logger.info(f"Ollama package found {len(model_names)} models: {model_names}")
-                _global_state["available_models"] = model_names
-                return model_names
-            else:
-                logger.warning("Ollama package returned data but no models could be extracted")
-        except Exception as e:
-            logger.warning(f"Error processing Ollama response: {e}")
-            import traceback
-            logger.warning(traceback.format_exc())
-    except ImportError as e:
-        logger.warning(f"Ollama package import failed: {e}")
-    except Exception as e:
-        logger.warning(f"Ollama package method unexpected error: {e}")
-    
-    # Method 4: Direct file system check (last resort)
-    try:
-        import os
-        import glob
-        
-        # Try to find models in common Ollama directories
-        ollama_dirs = [
-            os.path.expanduser("~/.ollama/models"),  # Linux/Mac
-            os.path.join(os.getenv("LOCALAPPDATA", ""), "ollama", "models"),  # Windows
-        ]
-        
-        for directory in ollama_dirs:
-            if os.path.exists(directory):
-                logger.info(f"Checking Ollama models directory: {directory}")
-                model_files = glob.glob(os.path.join(directory, "*/")) + glob.glob(os.path.join(directory, "*/**/"))
-                
-                models = []
-                for model_path in model_files:
-                    model_name = os.path.basename(os.path.normpath(model_path))
-                    if model_name and not model_name.startswith('.'):
-                        if ':' not in model_name:
-                            model_name += ':latest'
-                        models.append(model_name)
-                
-                if models:
-                    logger.info(f"Found models in directory {directory}: {models}")
-                    _global_state["available_models"] = models
-                    return models
-    except Exception as e:
-        logger.warning(f"File system check failed: {e}")
-    
-    # Extra fallback: Check if there are any common models that might be available
-    logger.warning("All methods to detect Ollama models failed. Using hardcoded fallback list.")
-    
-    # Last resort - try some common model names as a fallback
-    fallback_models = ["qwen3:0.6b", "cogito:latest", "deepseek-r1:1.5b", "phi4:latest"]
-    _global_state["available_models"] = fallback_models
-    return fallback_models
-
-
-def get_recommended_models(models):
-    """Get a list of recommended models from available models, categorized by size."""
-    small_recs = []
-    medium_recs = []
-    other_models = []
-    
-    # Find small models
-    for model in SMALL_MODELS:
-        if model in models:
-            small_recs.append(model)
-            
-    # Find medium models
-    for model in MEDIUM_MODELS:
-        if model in models:
-            medium_recs.append(model)
-    
-    # Any other models
-    other_models = [m for m in models if m not in small_recs and m not in medium_recs]
-    
-    return {
-        "small_models": small_recs,
-        "medium_models": medium_recs,
-        "other_models": other_models,
-        "all_models": models
-    }
+# check_available_models and get_recommended_models moved to ollama_utils.py
 
 def register_mcts_tools(mcp: FastMCP, db_path: str):
     """
@@ -400,11 +116,16 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
     # Initialize state manager for persistence
     _global_state["state_manager"] = StateManager(db_path)
 
-    # Initialize config with defaults
+    # Initialize config with defaults from mcts_config.py
     _global_state["config"] = DEFAULT_CONFIG.copy()
     
-    # Check available models
-    check_available_models()
+    # Populate available models from ollama_utils
+    _global_state["available_models"] = check_available_models()
+    # If no models are found, set a default or handle error appropriately
+    if not _global_state["available_models"]:
+        logger.warning("No Ollama models detected by ollama_utils.check_available_models(). Defaulting ollama_model might fail.")
+        # Consider setting _global_state["ollama_model"] to None or a specific fallback
+        # For now, it keeps OLLAMA_DEFAULT_MODEL set in _global_state definition.
 
     # Register the analysis tools if available
     if ANALYSIS_TOOLS_AVAILABLE:
