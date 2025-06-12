@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mcts-mcp-server"
 version = "0.1.0" # Initial version
@@ -15,14 +19,13 @@ dependencies = [
     "scikit-learn>=1.2.2",
     "scipy>=1.10.0",
     "psutil>=5.9.0",
-    # "mcp-server", # mcp[cli] should cover this
-    # "fastmcp",    # mcp[cli] should cover this
     "ollama",
     "httpx",
     "python-dotenv",
     "openai",
     "anthropic",
-    "google-generativeai"
+    "fastmcp>=2.8.0",
+    "google-genai>=1.20.0",
 ]
 
 [project.optional-dependencies]
@@ -31,9 +34,15 @@ dev = [
     "ruff", # Example linter/formatter
 ]
 
-# Example: If you want to specify a src layout for a find tool
-# [tool.setuptools.packages.find]
-# where = ["src"]
+[project.scripts]
+mcts-mcp-server = "mcts_mcp_server.server:main"
+mcts_mcp_server = "mcts_mcp_server.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
 
 [tool.uv] # Placeholder for any uv specific configurations if needed in future
 # Example:

@@ -28,7 +28,7 @@ class RealityWarpsAdapter(LLMInterface):
     def __init__(self, mcp_server=None):
         """
         Initialize the adapter.
-        
+
         Args:
             mcp_server: Optional MCP server instance
         """
@@ -38,7 +38,7 @@ class RealityWarpsAdapter(LLMInterface):
             "distortion_entropy": 0.2,
             "material_resource_control": {
                 "House Veritas": 0.7,
-                "House Mirage": 0.5, 
+                "House Mirage": 0.5,
                 "House Bastion": 0.6,
                 "Node_Abyss": 0.3
             },
@@ -52,7 +52,7 @@ class RealityWarpsAdapter(LLMInterface):
         # Track each step's effects and results
         self.step_results = []
         self.current_step = 0
-        
+
         logger.info("Initialized RealityWarpsAdapter")
 
     async def get_completion(self, model: str, messages: List[Dict[str, str]], **kwargs) -> str:
@@ -61,4 +61,13 @@ class RealityWarpsAdapter(LLMInterface):
             # Extract the user's message content (usually the last message)
             user_content = ""
             for msg in reversed(messages):
-                if msg.get("role") == "user"
+                if msg.get("role") == "user":
+                    user_content = msg.get("content", "")
+                    break
+
+            # Generate a response based on the Reality Warps scenario
+            return f"Reality Warps Analysis: {user_content}"
+
+        except Exception as e:
+            logger.error(f"Error in get_completion: {e}")
+            return "Error processing request in Reality Warps scenario."

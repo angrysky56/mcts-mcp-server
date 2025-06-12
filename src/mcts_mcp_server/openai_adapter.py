@@ -32,11 +32,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         self.logger = logging.getLogger(__name__) # Ensure logger is initialized
         self.logger.info(f"Initialized OpenAIAdapter with model: {self.model_name}")
 
-<<<<<<< HEAD
-    async def get_completion(self, model: Optional[str], messages: List[Dict[str, str]], **kwargs) -> str:
-=======
     async def get_completion(self, model: Optional[str], messages: List[Dict[str, str]], **kwargs) -> str: # Removed default for model
->>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         """
         Gets a non-streaming completion from the OpenAI LLM.
         """
@@ -62,11 +58,7 @@ class OpenAIAdapter(BaseLLMAdapter):
             self.logger.error(f"Unexpected error in OpenAI get_completion: {e}")
             return f"Error: Unexpected error during OpenAI request - {type(e).__name__}: {e}"
 
-<<<<<<< HEAD
-    async def get_streaming_completion(self, model: Optional[str], messages: List[Dict[str, str]], **kwargs) -> AsyncGenerator[str, None]:
-=======
     async def get_streaming_completion(self, model: Optional[str], messages: List[Dict[str, str]], **kwargs) -> AsyncGenerator[str, None]: # Removed default for model
->>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         """
         Gets a streaming completion from the OpenAI LLM.
         """
@@ -107,22 +99,14 @@ async def _test_openai_adapter():
 
         logger.info("Testing OpenAIAdapter get_completion...")
         messages = [{"role": "user", "content": "Hello, what is the capital of France?"}]
-<<<<<<< HEAD
         completion = await adapter.get_completion(model=None, messages=messages)
-=======
-        completion = await adapter.get_completion(messages=messages)
->>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         logger.info(f"Completion result: {completion}")
         assert "Paris" in completion
 
         logger.info("Testing OpenAIAdapter get_streaming_completion...")
         stream_messages = [{"role": "user", "content": "Write a short poem about AI."}]
         full_streamed_response = ""
-<<<<<<< HEAD
         async for chunk in adapter.get_streaming_completion(model=None, messages=stream_messages):
-=======
-        async for chunk in adapter.get_streaming_completion(messages=stream_messages):
->>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
             logger.info(f"Stream chunk: '{chunk}'")
             full_streamed_response += chunk
         logger.info(f"Full streamed response: {full_streamed_response}")

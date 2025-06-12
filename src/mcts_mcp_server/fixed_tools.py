@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 MCP Tools for MCTS
@@ -10,9 +9,9 @@ import asyncio
 import json
 import logging
 import datetime
-import os  # Moved up
-import sys  # Moved up
-import importlib.util  # Moved up
+import os
+import sys
+import importlib.util
 from typing import Dict, Any, Optional, List
 
 # Ensure the 'src' directory (parent of this 'mcts_mcp_server' directory) is in sys.path
@@ -22,7 +21,7 @@ _src_dir = os.path.dirname(_current_file_dir)
 if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir) # Insert at the beginning to be checked first
 
-import fastmcp as FastMCP
+from fastmcp import MCP
 from llm_adapter import DirectMcpLLMAdapter
 
 # Try several import strategies to ensure we can import the Ollama adapter
@@ -58,11 +57,14 @@ except ImportError as e:
             adapter_path = os.path.join(current_dir, "ollama_adapter.py")
             if os.path.exists(adapter_path):
                 spec = importlib.util.spec_from_file_location("ollama_adapter", adapter_path)
-                ollama_adapter = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(ollama_adapter)
-                OllamaAdapter = ollama_adapter.OllamaAdapter
-                OLLAMA_AVAILABLE = True
-                print("Successfully imported OllamaAdapter (manual load)")
+                if spec is not None and spec.loader is not None:
+                    ollama_adapter = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(ollama_adapter)
+                    OllamaAdapter = ollama_adapter.OllamaAdapter
+                    OLLAMA_AVAILABLE = True
+                    print("Successfully imported OllamaAdapter (manual load)")
+                else:
+                    print(f"Failed to create module spec or loader for {adapter_path}")
             else:
                 print(f"Adapter file not found at {adapter_path}")
         except Exception as e:
@@ -83,8 +85,10 @@ if OLLAMA_AVAILABLE:
 
 # Import from the MCTS core implementation
 from mcts_core import (
-    MCTS, StateManager, DEFAULT_CONFIG, truncate_text
+    MCTS, DEFAULT_CONFIG, truncate_text
 )
+
+from state_manager import StateManager
 
 # Import the results collector
 try:
@@ -126,6 +130,7 @@ def run_async(coro):
     def thread_runner():
         result = None
         exception = None
+        loop = None
         try:
             # Create a new event loop for this thread
             loop = asyncio.new_event_loop()
@@ -136,7 +141,7 @@ def run_async(coro):
             exception = e
         finally:
             # Clean up
-            if 'loop' in locals():
+            if loop is not None:
                 loop.close()
         return result, exception
 
@@ -253,7 +258,7 @@ def check_available_models():
                     if isinstance(model, dict) and "name" in model:
                         model_names.append(model["name"])
                     elif hasattr(model, 'name'):
-                        model_names.append(model.name)
+                        model_names.append(model["name"])
                     else:
                         # Last resort - convert to string
                         model_names.append(str(model))
@@ -301,7 +306,7 @@ def select_default_model(models):
         _global_state["ollama_model"] = models[0]
         logger.info(f"Selected first available model: {models[0]}")
 
-def register_mcts_tools(mcp: FastMCP, db_path: str):
+def register_mcts_tools(mcp: MCP, db_path: str):
     """
     Register all MCTS-related tools with the MCP server.
 
@@ -396,7 +401,26 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             # Always try to use Ollama first
             logger.info(f"Using OllamaAdapter with model {model_name}")
             try:
-                llm_adapter = OllamaAdapter(model_name=model_name, mcp_server=mcp)
+                if OLLAMA_AVAILABLE and OllamaAdapter is not None:
+                    # Check if OllamaAdapter is properly implemented
+                    try:
+                        # Check if OllamaAdapter is properly implemented before instantiation
+                        import inspect
+                        if inspect.isabstract(OllamaAdapter):
+                            abstract_methods = getattr(OllamaAdapter, '__abstractmethods__', set())
+                            raise NotImplementedError(f"OllamaAdapter has unimplemented abstract methods: {abstract_methods}")
+
+                        llm_adapter = OllamaAdapter(model_name=model_name, mcp_server=mcp)
+                        # Test if the adapter has required methods implemented
+                        if not hasattr(llm_adapter, 'get_completion') or not callable(getattr(llm_adapter, 'get_completion')):
+                            raise NotImplementedError("OllamaAdapter.get_completion not properly implemented")
+                        if not hasattr(llm_adapter, 'get_streaming_completion') or not callable(getattr(llm_adapter, 'get_streaming_completion')):
+                            raise NotImplementedError("OllamaAdapter.get_streaming_completion not properly implemented")
+                    except (TypeError, NotImplementedError) as e:
+                        logger.error(f"OllamaAdapter is not properly implemented: {e}")
+                        raise ImportError("OllamaAdapter implementation incomplete")
+                else:
+                    raise ImportError("OllamaAdapter not available")
             except Exception as e:
                 # Only use the fallback adapter if Ollama fails completely
                 logger.error(f"Failed to initialize Ollama adapter: {e}")
@@ -406,7 +430,9 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             # Test the adapter with a simple query
             try:
                 async def test_adapter():
-                    test_result = await llm_adapter.get_completion(None, [{"role": "user", "content": "Test message"}])
+                    # Ensure we have a valid model name for testing
+                    test_model = model_name or _global_state["ollama_model"] or DEFAULT_MODEL
+                    test_result = await llm_adapter.get_completion(test_model, [{"role": "user", "content": "Test message"}])
                     return test_result
 
                 run_async(test_adapter())
@@ -423,9 +449,13 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
 
             # Call LLM for initial analysis (synchronously)
             async def get_initial_analysis():
-                return await llm_adapter.get_completion(None, initial_messages)
+                return await llm_adapter.get_completion(model_name or _global_state["ollama_model"], initial_messages)
 
             initial_analysis = run_async(get_initial_analysis())
+
+            # Ensure initial_analysis is a string
+            if initial_analysis is None:
+                initial_analysis = "Initial analysis not available."
 
             # Initialize MCTS
             logger.info("Creating MCTS instance...")
@@ -441,9 +471,9 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             _global_state["mcts_instance"] = run_async(init_mcts())
 
             # Start collecting results if enabled
-            if _global_state["collect_results"] and COLLECTOR_AVAILABLE:
+            if _global_state["collect_results"] and COLLECTOR_AVAILABLE and results_collector is not None:
                 current_run_id = results_collector.start_run(
-                    model_name=_global_state["ollama_model"],  # Always use Ollama model
+                    model_name=_global_state["ollama_model"] or DEFAULT_MODEL,  # Always use Ollama model
                     question=question,
                     config=cfg
                 )
@@ -638,7 +668,7 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         logger.info(f"Running MCTS with {iterations} iterations, {simulations_per_iteration} simulations per iteration...")
 
         # Update collector status if enabled
-        if _global_state["collect_results"] and COLLECTOR_AVAILABLE and _global_state.get("current_run_id"):
+        if _global_state["collect_results"] and COLLECTOR_AVAILABLE and results_collector is not None and _global_state.get("current_run_id"):
             results_collector.update_run_status(
                 _global_state["current_run_id"],
                 "running",
@@ -660,7 +690,7 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             logger.error(f"Error running MCTS: {e}")
 
             # Update collector with failure if enabled
-            if _global_state["collect_results"] and COLLECTOR_AVAILABLE and _global_state.get("current_run_id"):
+            if _global_state["collect_results"] and COLLECTOR_AVAILABLE and results_collector is not None and _global_state.get("current_run_id"):
                 results_collector.update_run_status(
                     _global_state["current_run_id"],
                     "failed",
@@ -668,6 +698,11 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
                 )
 
             return {"error": f"MCTS run failed: {str(e)}"}
+
+        # Check if results is None
+        if results is None:
+            logger.error("MCTS search returned None results")
+            return {"error": "MCTS search returned no results"}
 
         # Save state if enabled
         if temp_config.get("enable_state_persistence", True) and _global_state["current_chat_id"]:
@@ -684,8 +719,8 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         # Prepare results
         result_dict = {
             "status": "completed",
-            "best_score": results.best_score,
-            "best_solution": results.best_solution_content,
+            "best_score": getattr(results, 'best_score', 0.0),
+            "best_solution": getattr(results, 'best_solution_content', ''),
             "tags": tags,
             "iterations_completed": mcts.iterations_completed,
             "simulations_completed": mcts.simulations_completed,
@@ -693,7 +728,7 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         }
 
         # Save results to collector if enabled
-        if _global_state["collect_results"] and COLLECTOR_AVAILABLE and _global_state.get("current_run_id"):
+        if _global_state["collect_results"] and COLLECTOR_AVAILABLE and results_collector is not None and _global_state.get("current_run_id"):
             results_collector.save_run_results(_global_state["current_run_id"], result_dict)
             result_dict["run_id"] = _global_state["current_run_id"]
 
@@ -757,9 +792,11 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
 
         try:
             synthesis_result = run_async(synth())
+            if synthesis_result is None:
+                return {"error": "Failed to generate synthesis - no results returned"}
 
             # Update results in collector if enabled
-            if _global_state["collect_results"] and COLLECTOR_AVAILABLE and _global_state.get("current_run_id"):
+            if _global_state["collect_results"] and COLLECTOR_AVAILABLE and results_collector is not None and _global_state.get("current_run_id"):
                 results_collector.update_run_status(
                     _global_state["current_run_id"],
                     "completed",
@@ -771,9 +808,7 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
 
         except Exception as e:
             logger.error(f"Error generating synthesis: {e}")
-            return {"error": f"Synthesis generation failed: {str(e)}"}
-
-    @mcp.tool()
+            return {"error": f"Synthesis generation failed: {str(e)}"}    @mcp.tool()
     def get_config() -> Dict[str, Any]:
         """
         Get the current MCTS configuration.
@@ -906,7 +941,7 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         if not OLLAMA_AVAILABLE:
             return {"error": "Ollama is not available. Cannot run model comparison."}
 
-        if not COLLECTOR_AVAILABLE:
+        if not COLLECTOR_AVAILABLE or results_collector is None:
             return {"error": "Results collector is not available. Cannot track comparison results."}
 
         # Refresh available models

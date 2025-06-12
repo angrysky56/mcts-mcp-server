@@ -76,12 +76,14 @@ def calculate_semantic_distance(text1: Any, text2: Any, use_tfidf: bool = True) 
         try:
             # Ensure ENGLISH_STOP_WORDS is a list if SKLEARN_AVAILABLE is True
             custom_stop_words = list(ENGLISH_STOP_WORDS) + ["analysis", "however", "therefore", "furthermore", "perspective"]
-            vectorizer = TfidfVectorizer(stop_words=custom_stop_words, max_df=0.9, min_df=1)
+            from sklearn.feature_extraction.text import TfidfVectorizer as ActualTfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity as actual_cosine_similarity
+            vectorizer = ActualTfidfVectorizer(stop_words=custom_stop_words, max_df=0.9, min_df=1)
             tfidf_matrix = vectorizer.fit_transform([s_text1, s_text2])
             if tfidf_matrix.shape[0] < 2 or tfidf_matrix.shape[1] == 0:
                 logger.debug(f"TF-IDF matrix issue (shape: {tfidf_matrix.shape}) for texts. Falling back to Jaccard.")
             else:
-                similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+                similarity = actual_cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
                 similarity = max(0.0, min(1.0, similarity)) # Clamp similarity
                 return 1.0 - similarity
         except ValueError as ve:
@@ -119,7 +121,8 @@ def _summarize_text(text: str, max_words: int = 50) -> str:
             sentences = [s for s in sentences if len(s.split()) > 3]
             if not sentences: return ' '.join(words[:max_words]) + '...'
 
-            vectorizer = TfidfVectorizer(stop_words='english')
+            from sklearn.feature_extraction.text import TfidfVectorizer as ActualTfidfVectorizer
+            vectorizer = ActualTfidfVectorizer(stop_words='english')
             tfidf_matrix = vectorizer.fit_transform(sentences)
             sentence_scores = np.array(tfidf_matrix.sum(axis=1)).flatten()
 

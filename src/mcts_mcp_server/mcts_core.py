@@ -11,12 +11,12 @@ import logging
 import random
 import math
 import asyncio
+import re
 # import json # No longer used directly
-# import re # No longer used directly
 # import os # No longer used directly
 # import sqlite3 # No longer used directly
 # from datetime import datetime # No longer used directly
-from collections import namedtuple # Counter is no longer used directly
+from collections import namedtuple, Counter
 from typing import (
     List, Optional, Dict, Any, Tuple, Set, Protocol, AsyncGenerator # Removed Union, Generator
 )
@@ -452,7 +452,7 @@ class MCTS:
         current_depth = len(selection_path_ids) - 1
         self.memory["depth"] = max(self.memory.get("depth", 0), current_depth)
         if self.debug_logging:
-             path_seq = [self._find_node_by_id(nid).sequence if self._find_node_by_id(nid) else '?' for nid in selection_path_ids]
+             path_seq = [(node.sequence if node else '?') for nid in selection_path_ids for node in [self._find_node_by_id(nid)]]
              logger.debug(f"Selection path (Sequences): {' -> '.join(map(str, path_seq))}")
 
         return node # Return the selected leaf or expandable node
@@ -753,7 +753,7 @@ class MCTS:
 
         # Performance optimization - run multiple simulations concurrently
         max_concurrent = 3  # Set a reasonable limit for concurrency
-        
+
         for i in range(num_iterations):
             self.iterations_completed = i + 1
             logger.info(f"--- Starting Iteration {self.iterations_completed}/{num_iterations} ---")
@@ -763,23 +763,23 @@ class MCTS:
             for batch_start in range(0, simulations_per_iteration, max_concurrent):
                 batch_size = min(max_concurrent, simulations_per_iteration - batch_start)
                 batch_tasks = []
-                
+
                 # Create tasks for the batch
                 for j in range(batch_start, batch_start + batch_size):
                     sim_num = j + 1
                     task = asyncio.create_task(self._run_single_simulation(sim_num, simulations_per_iteration))
                     batch_tasks.append(task)
-                
+
                 # Wait for the batch to complete
                 await asyncio.gather(*batch_tasks)
-                
+
                 # Check early stopping after each batch
                 if (cfg["early_stopping"] and
                     self.best_score >= cfg["early_stopping_threshold"] and
                     self.high_score_counter >= cfg["early_stopping_stability"]):
                     logger.info(f"EARLY STOPPING criteria met during Iteration {self.iterations_completed}.")
                     return  # Exit early
-            
+
             # --- End of Simulations for Iteration i ---
             logger.info(f"--- Finished Iteration {self.iterations_completed}. Current Best Score: {self.best_score:.2f} ---")
 
@@ -791,13 +791,13 @@ class MCTS:
                 break  # Exit outer iteration loop
 
         logger.info("MCTS search finished.")
-    
+
     async def _run_single_simulation(self, current_sim_num: int, total_sims: int) -> None:
         """Runs a single simulation (select-expand-simulate-backpropagate cycle)."""
         self.simulations_completed += 1
         cfg = self.config
-        
-        if self.debug_logging: 
+
+        if self.debug_logging:
             logger.debug(f"--- Sim {current_sim_num}/{total_sims} ---")
 
         # 1. Select
@@ -809,15 +809,15 @@ class MCTS:
         # 2. Expand (if not terminal and not fully expanded)
         node_to_simulate = leaf
         if not leaf.fully_expanded() and leaf.content:  # Check content exists
-            if self.debug_logging: 
+            if self.debug_logging:
                 logger.debug(f"Sim {current_sim_num}: Attempting expansion from Node {leaf.sequence}")
             expanded_node = await self.expand(leaf)
             if expanded_node:
                 node_to_simulate = expanded_node  # Simulate the newly expanded node
-                if self.debug_logging: 
+                if self.debug_logging:
                     logger.debug(f"Sim {current_sim_num}: Expanded {leaf.sequence} -> {node_to_simulate.sequence}")
             else:
-                if self.debug_logging: 
+                if self.debug_logging:
                     logger.warning(f"Sim {current_sim_num}: Expansion failed for {leaf.sequence}. Simulating original leaf.")
                 node_to_simulate = leaf  # Simulate original leaf if expansion failed
         elif self.debug_logging:
@@ -853,10 +853,10 @@ class MCTS:
             # Check early stopping (threshold) - based on overall best score
             if cfg["early_stopping"] and self.best_score >= cfg["early_stopping_threshold"]:
                 self.high_score_counter += 1  # Increment counter only if score >= threshold
-                if self.debug_logging: 
+                if self.debug_logging:
                     logger.debug(f"Sim {current_sim_num}: Best score ({self.best_score:.1f}) >= threshold. Stability: {self.high_score_counter}/{cfg['early_stopping_stability']}")
         else:  # Simulation failed (score is None)
-            if node_to_simulate: 
+            if node_to_simulate:
                 logger.warning(f"Sim {current_sim_num}: Simulation failed for Node {node_to_simulate.sequence}. No score obtained.")
             self.high_score_counter = 0  # Reset stability counter if sim fails
 
@@ -873,7 +873,7 @@ class MCTS:
                 cleaned_solution = re.sub(r'</?think>', '', cleaned_solution)
             else:
                 cleaned_solution = clean_attempt
-            
+
         # In a real app, you might want more detailed results (e.g., best node path)
         return MCTSResult(
             best_score=self.best_score,

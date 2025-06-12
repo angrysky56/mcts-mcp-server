@@ -19,13 +19,133 @@ This MCP server enables Claude to use Monte Carlo Tree Search (MCTS) algorithms 
 - **Intent Classification**: Understands when users want to start a new analysis or continue a previous one
 - **Multi-LLM Support**: Supports Ollama, OpenAI, Anthropic, and Google Gemini models.
 
+## Quick Start Installation
+
+The MCTS MCP Server now includes cross-platform setup scripts that work on Windows, macOS, and Linux.
+
+### Prerequisites
+
+- **Python 3.10+** (required)
+- **Internet connection** (for downloading dependencies)
+
+### Automatic Setup
+
+**Option 1: Cross-platform Python setup (Recommended)**
+```bash
+# Clone the repository
+git clone https://github.com/angrysky56/mcts-mcp-server.git
+cd mcts-mcp-server
+
+# Run the setup script
+python setup.py
+```
+
+**Option 2: Platform-specific scripts**
+
+**Linux/macOS:**
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+**Windows:**
+```cmd
+setup_windows.bat
+```
+
+### What the Setup Does
+
+The setup script automatically:
+1. ✅ Checks Python version compatibility (3.10+ required)
+2. ✅ Installs the UV package manager (if not present)
+3. ✅ Creates a virtual environment 
+4. ✅ Installs all dependencies including google-genai
+5. ✅ Creates `.env` file from template
+6. ✅ Generates Claude Desktop configuration
+7. ✅ Creates state directories
+8. ✅ Verifies the installation
+
+### Verify Installation
+
+After setup, verify everything works:
+
+```bash
+python verify_installation.py
+```
+
+This runs comprehensive checks and tells you if anything needs fixing.
+
+## Configuration
+
+### 1. API Keys Setup
+
+Edit the `.env` file created during setup:
+
+```env
+# Add your API keys (remove quotes and add real keys)
+OPENAI_API_KEY=sk-your-openai-key-here
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
+GEMINI_API_KEY=your-gemini-api-key-here
+
+# Set default provider and model (optional)
+DEFAULT_LLM_PROVIDER=gemini
+DEFAULT_MODEL_NAME=gemini-2.0-flash
+```
+
+**Getting API Keys:**
+- **OpenAI**: https://platform.openai.com/api-keys
+- **Anthropic**: https://console.anthropic.com/
+- **Google Gemini**: https://aistudio.google.com/app/apikey
+- **Ollama**: No API key needed (local models)
+
+### 2. Claude Desktop Integration
+
+The setup creates `claude_desktop_config.json`. Add its contents to your Claude Desktop config:
+
+**Linux/macOS:**
+```bash
+# Config location
+~/.config/claude/claude_desktop_config.json
+```
+
+**Windows:**
+```cmd
+# Config location  
+%APPDATA%\Claude\claude_desktop_config.json
+```
+
+**Example config structure:**
+```json
+{
+  "mcpServers": {
+    "mcts-mcp-server": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path/to/mcts-mcp-server",
+        "run",
+        "mcts-mcp-server"
+      ],
+      "env": {
+        "UV_PROJECT_ENVIRONMENT": "/path/to/mcts-mcp-server/.venv"
+      }
+    }
+  }
+}
+```
+
+**Important:** Update the paths to match your installation directory.
+
+### 3. Restart Claude Desktop
+
+After adding the configuration, restart Claude Desktop to load the MCTS server.
+
 ## Usage
 
-The server exposes the many tools to your LLM detailed below in a copy-pasteable format for your system prompt.
+The server exposes many tools to your LLM detailed below in a copy-pasteable format for your system prompt.
 
 When you ask Claude to perform deep analysis on a topic or question, it will leverage these tools automatically to explore different angles using the
 MCTS algorithm and analysis tools.
-
 
 ![alt text](image-2.png)
 
@@ -41,43 +161,99 @@ When Claude asks the server to perform analysis, the server:
 3. Generates deterministic responses for various analytical tasks
 4. Returns the best analysis found during the search
 
+## Manual Installation (Advanced)
 
-## Installation
+If you prefer manual setup or the automatic setup fails:
 
-Clone the repository:
+### 1. Install UV Package Manager
 
-The setup uses UV (Astral UV), a faster alternative to pip that offers improved dependency resolution.
-
-1. Ensure you have Python 3.10+ installed
-2. Run the setup script:
-
+**Linux/macOS:**
 ```bash
-./setup.sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-This will:
-- Install UV if not already installed
-- Create a virtual environment with UV
-- Install the project and its dependencies using UV (which reads `pyproject.toml`, including `openai`, `anthropic`, `google-generativeai`, and `python-dotenv`). Development dependencies are also installed.
-- Create the necessary state directory
-
-Alternatively, you can manually set up:
-
-```bash
-# Install UV if not already installed
-curl -fsSL https://astral.sh/uv/install.sh | bash
+**Windows (PowerShell):**
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+### 2. Setup Project
+
 ```bash
-# Create and activate a virtual environment
+# Clone repository
+git clone https://github.com/angrysky56/mcts-mcp-server.git
+cd mcts-mcp-server
+
+# Create virtual environment
 uv venv .venv
-source .venv/bin/activate
 
-# Install dependencies from pyproject.toml
+# Activate virtual environment
+# Linux/macOS:
+source .venv/bin/activate
+# Windows:
+.venv\Scripts\activate
+
+# Install dependencies
 uv pip install .
-# Optionally, install development dependencies
-uv pip install .[dev]
+uv pip install .[dev]  # Optional development dependencies
+
+# Install Gemini package specifically (if not in pyproject.toml)
+uv pip install google-genai>=1.20.0
 ```
+
+### 3. Create Configuration Files
+
+```bash
+# Copy environment file
+cp .env.example .env
+
+# Edit .env file with your API keys
+nano .env  # or use your preferred editor
+
+# Create state directory
+mkdir -p ~/.mcts_mcp_server
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**1. Python Version Error**
+```
+Solution: Install Python 3.10+ from python.org
+```
+
+**2. UV Not Found After Install**
+```bash
+# Add UV to PATH manually
+export PATH="$HOME/.cargo/bin:$PATH"
+# Or on Windows: Add %USERPROFILE%\.cargo\bin to PATH
+```
+
+**3. Google Gemini Import Error**
+```bash
+# Install Gemini package manually
+uv pip install google-genai
+```
+
+**4. Permission Denied (Linux/macOS)**
+```bash
+# Make scripts executable
+chmod +x setup.sh setup_unix.sh
+```
+
+**5. Claude Desktop Not Detecting Server**
+- Verify config file location and syntax
+- Check that paths in config are absolute and correct
+- Restart Claude Desktop completely
+- Check Claude Desktop logs for errors
+
+### Getting Help
+
+1. **Run verification**: `python verify_installation.py`
+2. **Check logs**: Look at Claude Desktop's developer tools
+3. **Test components**: Run individual tests in the repository
+4. **Review documentation**: Check USAGE_GUIDE.md for detailed instructions
 
 ## API Key Management
 
@@ -100,39 +276,6 @@ For using LLM providers like OpenAI, Anthropic, and Google Gemini, you need to p
     If these are not set, the system defaults to "ollama" and attempts to use a model like "cogito:latest" or another provider-specific default.
 
 The `.env` file is included in `.gitignore`, so your actual keys will not be committed to the repository.
-
-## Claude Desktop Integration
-
-To integrate with Claude Desktop:
-
-1. Copy the contents of `claude_desktop_config.json` from this repository
-2. Add it to your Claude Desktop configuration (typically located at `~/.claude/claude_desktop_config.json`)
-3. If the config file doesn't exist yet, create it and add the content from this project's `claude_desktop_config.json`
-4. Restart Claude Desktop
-
-Example configuration:
-
-```json
-{
-  "mcpServers": {
-    "MCTSServer": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory", "/home/ty/Repositories/ai_workspace/mcts-mcp-server/src/mcts_mcp_server",
-        "server.py"
-      ],
-      "env": {
-        "PYTHONPATH": "/home/ty/Repositories/ai_workspace/mcts-mcp-server"
-      }
-    }
-  }
-}
-
-```
-
-**Make sure to update the paths** to match the location of the MCTS MCP server on your system.
-
 
 ## Suggested System Prompt and Updated tools
 
@@ -372,9 +515,14 @@ This returns the top 3 runs with a score of at least 8.0.
 
 ## For Developers
 
+### Development Setup
+
 ```bash
 # Activate virtual environment
 source .venv/bin/activate
+
+# Install development dependencies
+uv pip install .[dev]
 
 # Run the server directly (for testing)
 uv run server.py
@@ -383,7 +531,7 @@ uv run server.py
 uv run -m mcp dev server.py
 ```
 
-## Testing the Server
+### Testing the Server
 
 To test that the server is working correctly:
 
@@ -391,11 +539,33 @@ To test that the server is working correctly:
 # Activate the virtual environment
 source .venv/bin/activate
 
+# Run the verification script
+python verify_installation.py
+
 # Run the test script
 python test_server.py
 ```
 
 This will test the LLM adapter to ensure it's working properly.
+
+### Project Structure
+
+```
+mcts-mcp-server/
+├── src/mcts_mcp_server/          # Main package
+│   ├── adapters/                 # LLM adapters
+│   ├── analysis_tools/           # Analysis and reporting tools
+│   ├── mcts_core.py             # Core MCTS algorithm
+│   ├── tools.py                 # MCP tools
+│   └── server.py                # MCP server
+├── setup.py                     # Cross-platform setup script
+├── setup.sh                     # Unix setup script
+├── setup_windows.bat            # Windows setup script
+├── verify_installation.py       # Installation verification
+├── pyproject.toml               # Project configuration
+├── .env.example                 # Environment template
+└── README.md                    # This file
+```
 
 ## Contributing
 
@@ -405,5 +575,14 @@ Contributions to improve the MCTS MCP server are welcome. Some areas for potenti
 - Adding more sophisticated thought patterns and evaluation strategies
 - Enhancing the tree visualization and result reporting
 - Optimizing the MCTS algorithm parameters
+
+### Development Workflow
+
+1. **Fork the repository**
+2. **Run setup**: `python setup.py`
+3. **Verify installation**: `python verify_installation.py`
+4. **Make changes**
+5. **Test changes**: `python test_server.py`
+6. **Submit pull request**
 
 # License: [MIT](https://github.com/angrysky56/mcts-mcp-server/blob/main/LICENSE)

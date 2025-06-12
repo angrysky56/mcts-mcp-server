@@ -43,63 +43,27 @@ _global_state = {
     "active_model_name": os.getenv("DEFAULT_MODEL_NAME"),
     "collect_results": False,
     "current_run_id": None,
-    "ollama_available_models": [],
-    "background_loop": None,
-    "background_thread": None
+    "ollama_available_models": []
 }
 
-def get_or_create_background_loop():
+def run_async_safe(coro):
     """
-    Get or create a background event loop that runs in a dedicated thread.
-    This ensures all async operations use the same event loop.
+    Safely run an async coroutine without event loop conflicts.
+    Uses a dedicated thread pool executor to avoid conflicts.
     """
-    global _global_state
+    def sync_runner():
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
     
-    if _global_state["background_loop"] is None or _global_state["background_thread"] is None:
-        loop_created = threading.Event()  # Use threading.Event instead of asyncio.Event
-        loop_container = {"loop": None}
-        
-        def create_background_loop():
-            """Create and run a background event loop."""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop_container["loop"] = loop
-            _global_state["background_loop"] = loop
-            loop_created.set()
-            
-            try:
-                loop.run_forever()
-            except Exception as e:
-                logger.error(f"Background loop error: {e}")
-            finally:
-                loop.close()
-        
-        # Start the background thread
-        thread = threading.Thread(target=create_background_loop, daemon=True)
-        thread.start()
-        _global_state["background_thread"] = thread
-        
-        # Wait for loop to be created
-        loop_created.wait(timeout=5.0)
-        if loop_container["loop"] is None:
-            raise RuntimeError("Failed to create background event loop")
-    
-    return _global_state["background_loop"]
-
-def run_in_background_loop(coro):
-    """
-    Run a coroutine in the background event loop.
-    This avoids the "bound to different event loop" issue.
-    """
-    loop = get_or_create_background_loop()
-    
-    if loop.is_running():
-        # Submit to the running loop and wait for result
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result(timeout=300)  # 5 minute timeout
-    else:
-        # This shouldn't happen if the background loop is properly managed
-        raise RuntimeError("Background event loop is not running")
+    # Use a thread pool executor to run the coroutine
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(sync_runner)
+        return future.result()
 
 def register_mcts_tools(mcp: FastMCP, db_path: str):
     """
@@ -189,14 +153,14 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
             _global_state["active_llm_provider"] = target_provider
             _global_state["active_model_name"] = target_model
 
-            # Generate initial analysis using the background loop
+            # Generate initial analysis using the safe async runner
             async def generate_initial():
                 initial_prompt = f"<instruction>Provide an initial analysis of the following question. Be clear and concise.</instruction><question>{question}</question>"
                 initial_messages = [{"role": "user", "content": initial_prompt}]
                 return await llm_adapter.get_completion(model=target_model, messages=initial_messages)
 
             try:
-                initial_analysis = run_in_background_loop(generate_initial())
+                initial_analysis = run_async_safe(generate_initial())
             except Exception as e:
                 logger.error(f"Failed to generate initial analysis: {e}")
                 return {"error": f"Failed to generate initial analysis: {str(e)}", "status": "error"}
@@ -322,12 +286,12 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
         def run_mcts_background():
             """Run MCTS in background thread with proper async handling."""
             try:
-                # Use the background loop for all async operations
+                # Use the safe async runner
                 async def run_search():
                     await mcts.run_search_iterations(iterations, simulations_per_iteration)
                     return mcts.get_final_results()
 
-                results = run_in_background_loop(run_search())
+                results = run_async_safe(run_search())
 
                 # Save state if enabled
                 if temp_config.get("enable_state_persistence", True) and _global_state["current_chat_id"]:
@@ -405,8 +369,7 @@ def register_mcts_tools(mcp: FastMCP, db_path: str):
                     "model": _global_state.get("active_model_name"),
                 }
 
-            # Use the background loop for synthesis generation
-            synthesis_result = run_in_background_loop(synth())
+            synthesis_result = run_async_safe(synth())
             return synthesis_result
 
         except Exception as e:
