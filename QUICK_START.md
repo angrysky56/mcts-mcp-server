@@ -43,7 +43,7 @@ Edit the `.env` file and add your API keys:
 ```env
 # Choose one or more providers
 OPENAI_API_KEY=sk-your-openai-key-here
-ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here  
+ANTHROPIC_API_KEY=sk-ant-your-anthropic-key-here
 GEMINI_API_KEY=your-gemini-api-key-here
 
 # For local models (no API key needed)
@@ -53,7 +53,7 @@ GEMINI_API_KEY=your-gemini-api-key-here
 ## 🖥️ Add to Claude Desktop
 
 1. Copy the contents of `claude_desktop_config.json`
-2. Add to your Claude Desktop config file:
+2. Add to your Claude Desktop config file with your own paths:
    - **Linux/macOS**: `~/.config/claude/claude_desktop_config.json`
    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 3. **Update the paths** in the config to match your installation
@@ -77,7 +77,7 @@ Once working, you can use these in Claude:
 # Set up your preferred model
 set_active_llm(provider_name="gemini", model_name="gemini-2.0-flash")
 
-# Start analysis  
+# Start analysis
 initialize_mcts(question="Your question", chat_id="analysis_001")
 
 # Run the search

@@ -58,7 +58,7 @@ setup_windows.bat
 The setup script automatically:
 1. ✅ Checks Python version compatibility (3.10+ required)
 2. ✅ Installs the UV package manager (if not present)
-3. ✅ Creates a virtual environment 
+3. ✅ Creates a virtual environment
 4. ✅ Installs all dependencies including google-genai
 5. ✅ Creates `.env` file from template
 6. ✅ Generates Claude Desktop configuration
@@ -110,7 +110,7 @@ The setup creates `claude_desktop_config.json`. Add its contents to your Claude 
 
 **Windows:**
 ```cmd
-# Config location  
+# Config location
 %APPDATA%\Claude\claude_desktop_config.json
 ```
 
@@ -122,12 +122,12 @@ The setup creates `claude_desktop_config.json`. Add its contents to your Claude 
       "command": "uv",
       "args": [
         "--directory",
-        "/path/to/mcts-mcp-server",
+        "/path/to/mcts-mcp-server/src",
         "run",
         "mcts-mcp-server"
       ],
       "env": {
-        "UV_PROJECT_ENVIRONMENT": "/path/to/mcts-mcp-server/.venv"
+        "UV_PROJECT_ENVIRONMENT": "/path/to/mcts-mcp-server"
       }
     }
   }
