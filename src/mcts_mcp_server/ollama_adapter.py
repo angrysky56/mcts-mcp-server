@@ -10,23 +10,35 @@ import logging
 import os
 import httpx # For direct HTTP calls if ollama package is problematic
 import json
+<<<<<<< HEAD
 from typing import AsyncGenerator, List, Dict, Any, Optional, Union
+=======
+from typing import AsyncGenerator, List, Dict, Any, Optional
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
 
 from .base_llm_adapter import BaseLLMAdapter
 
 # Attempt to import the official ollama package
 OLLAMA_PACKAGE_AVAILABLE = False
+<<<<<<< HEAD
 ollama_module = None # Use a different name to avoid confusion with the type hint
 try:
     import ollama as ollama_module # type: ignore
+=======
+try:
+    import ollama # type: ignore
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
     OLLAMA_PACKAGE_AVAILABLE = True
 except ImportError:
     pass # Handled in constructor
 
+<<<<<<< HEAD
 # Define the type for self.client
 # Use Any for the ollama client type if it's an optional dependency
 ClientType = Union[httpx.AsyncClient, Any]
 
+=======
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
 class OllamaAdapter(BaseLLMAdapter):
     """
     LLM Adapter for local Ollama models.
@@ -35,16 +47,27 @@ class OllamaAdapter(BaseLLMAdapter):
 
     def __init__(self, model_name: Optional[str] = None, host: Optional[str] = None, **kwargs):
         super().__init__(**kwargs) # Pass kwargs like api_key (though not used by Ollama)
+<<<<<<< HEAD
 
+=======
+        
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         self.model_name = model_name or self.DEFAULT_MODEL
         self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self.logger = logging.getLogger(__name__)
         self._client_type = None # To track if 'ollama' or 'httpx' is used
+<<<<<<< HEAD
         self.client: ClientType # Type hint for self.client
 
         if OLLAMA_PACKAGE_AVAILABLE and ollama_module is not None: # Check ollama_module is not None
             try:
                 self.client = ollama_module.AsyncClient(host=self.host)
+=======
+
+        if OLLAMA_PACKAGE_AVAILABLE:
+            try:
+                self.client = ollama.AsyncClient(host=self.host)
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
                 self._client_type = "ollama"
                 self.logger.info(f"Initialized OllamaAdapter with model: {self.model_name} using 'ollama' package via host: {self.host}")
             except Exception as e:
@@ -55,7 +78,11 @@ class OllamaAdapter(BaseLLMAdapter):
             self.logger.info(f"Ollama package not found. Initializing OllamaAdapter with model: {self.model_name} using 'httpx' for host: {self.host}")
             self.client = httpx.AsyncClient(base_url=self.host, timeout=60.0)
             self._client_type = "httpx"
+<<<<<<< HEAD
 
+=======
+        
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         # Quick health check using httpx as it's always available here
         try:
             # This is a synchronous check for simplicity during init
@@ -73,10 +100,17 @@ class OllamaAdapter(BaseLLMAdapter):
         target_model = model if model is not None else self.model_name # Check for None explicitly
         self.logger.debug(f"Ollama get_completion using model: {target_model}, client: {self._client_type}, messages: {messages}, kwargs: {kwargs}")
 
+<<<<<<< HEAD
         if self._client_type == "ollama" and OLLAMA_PACKAGE_AVAILABLE and ollama_module is not None: # Add ollama_module is not None
             try:
                 # Ensure client is the correct type for type checker, though it should be
                 if not isinstance(self.client, ollama_module.AsyncClient): # Use ollama_module
+=======
+        if self._client_type == "ollama" and OLLAMA_PACKAGE_AVAILABLE:
+            try:
+                # Ensure client is the correct type for type checker, though it should be
+                if not isinstance(self.client, ollama.AsyncClient):
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
                     raise TypeError("Ollama client not initialized correctly for 'ollama' package.")
 
                 response = await self.client.chat(
@@ -113,9 +147,15 @@ class OllamaAdapter(BaseLLMAdapter):
         target_model = model if model is not None else self.model_name # Check for None explicitly
         self.logger.debug(f"Ollama get_streaming_completion using model: {target_model}, client: {self._client_type}, messages: {messages}, kwargs: {kwargs}")
 
+<<<<<<< HEAD
         if self._client_type == "ollama" and OLLAMA_PACKAGE_AVAILABLE and ollama_module is not None: # Add ollama_module is not None
             try:
                 if not isinstance(self.client, ollama_module.AsyncClient): # Use ollama_module
+=======
+        if self._client_type == "ollama" and OLLAMA_PACKAGE_AVAILABLE:
+            try:
+                if not isinstance(self.client, ollama.AsyncClient):
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
                     raise TypeError("Ollama client not initialized correctly for 'ollama' package.")
 
                 async for part in await self.client.chat(
@@ -173,13 +213,21 @@ async def _test_ollama_adapter():
 
         logger.info("Testing get_completion with OllamaAdapter...")
         messages = [{"role": "user", "content": "Why is the sky blue?"}]
+<<<<<<< HEAD
         response = await adapter.get_completion(model=None, messages=messages)
+=======
+        response = await adapter.get_completion(messages=messages)
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         logger.info(f"Completion response: {response}")
         assert response and "Error:" not in response # Basic check
 
         logger.info("\nTesting get_streaming_completion with OllamaAdapter...")
         full_streamed_response = ""
+<<<<<<< HEAD
         async for chunk in adapter.get_streaming_completion(model=None, messages=messages):
+=======
+        async for chunk in adapter.get_streaming_completion(messages=messages):
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
             logger.info(f"Stream chunk: '{chunk}'")
             full_streamed_response += chunk
         logger.info(f"Full streamed response: {full_streamed_response}")

@@ -141,6 +141,10 @@ class AnthropicAdapter(BaseLLMAdapter):
 
         if not processed_messages:
             self.logger.warning("No user/assistant messages to send to Anthropic for streaming. Yielding nothing.")
+<<<<<<< HEAD
+=======
+            if False: yield # Must be a generator
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
             return
 
         self.logger.debug(f"Anthropic get_streaming_completion using model: {target_model}, system: '{system_prompt}', messages: {processed_messages}, max_tokens: {max_tokens}, kwargs: {api_kwargs}")
@@ -162,6 +166,7 @@ class AnthropicAdapter(BaseLLMAdapter):
             self.logger.error(f"Unexpected error in Anthropic get_streaming_completion: {e}")
             yield f"Error: Unexpected error during Anthropic streaming request - {type(e).__name__}: {e}"
 
+<<<<<<< HEAD
     async def classify_intent(self, text_to_classify: str, config: Dict[str, Any]) -> str:
         """
         Classifies user intent using the Anthropic LLM.
@@ -212,6 +217,8 @@ Respond with only the category name (exactly as shown above)."""
             self.logger.error(f"Error in classify_intent: {e}")
             return "ANALYZE_NEW"  # Default fallback
 
+=======
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
 # Example of how to use (for testing purposes)
 async def _test_anthropic_adapter():
     logging.basicConfig(level=logging.INFO)
@@ -230,14 +237,22 @@ async def _test_anthropic_adapter():
             {"role": "system", "content": "You are a helpful assistant that provides concise answers."},
             {"role": "user", "content": "Hello, what is the capital of France?"}
         ]
+<<<<<<< HEAD
         completion = await adapter.get_completion(model=None, messages=messages_with_system)
+=======
+        completion = await adapter.get_completion(messages=messages_with_system)
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
         logger.info(f"Completion result (with system prompt): {completion}")
         assert "Paris" in completion
 
         logger.info("Testing AnthropicAdapter get_streaming_completion...")
         stream_messages = [{"role": "user", "content": "Write a very short poem about AI."}]
         full_streamed_response = ""
+<<<<<<< HEAD
         async for chunk in adapter.get_streaming_completion(model=None, messages=stream_messages, max_tokens=50):
+=======
+        async for chunk in adapter.get_streaming_completion(messages=stream_messages, max_tokens=50):
+>>>>>>> fbff161 (feat: Convert project to uv with pyproject.toml)
             logger.info(f"Stream chunk: '{chunk}'")
             full_streamed_response += chunk
         logger.info(f"Full streamed response: {full_streamed_response}")
