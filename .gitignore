@@ -31,7 +31,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+*.lock
 # Temporal Memory Fragments: Log Patterns
 *.log
 logs/
