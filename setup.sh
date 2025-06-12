@@ -14,7 +14,16 @@ if ! command -v uv &> /dev/null; then
     echo "UV not installed. Installing UV..."
     curl -fsSL https://astral.sh/uv/install.sh | bash
     # Reload shell to use uv
-    source ~/.bashrc
+    # It's generally better to inform the user to source or open a new shell
+    # as 'source ~/.bashrc' might not work as expected in all script execution contexts.
+    # For this script's execution, uv might be available if its install path is added to PATH during curl script.
+    # If not, the script might fail here if uv isn't found immediately.
+    # Assuming the astral script makes uv available in PATH for the current session or user needs to ensure it.
+    if ! command -v uv &> /dev/null; then
+        echo "UV installation finished, but 'uv' command is not available in the current session's PATH."
+        echo "Please try running this script again in a new terminal session, or ensure UV's bin directory (e.g., $HOME/.cargo/bin or $HOME/.local/bin) is in your PATH."
+        exit 1
+    fi
 fi
 
 # Create and activate virtual environment using UV
@@ -28,9 +37,12 @@ fi
 # Activate virtual environment (for this script)
 source .venv/bin/activate
 
-# Install dependencies with UV
-echo "Installing dependencies with UV..."
-uv pip install -r requirements.txt
+# Install dependencies with UV using pyproject.toml
+echo "Installing project dependencies with UV (from pyproject.toml)..."
+uv pip install .
+
+echo "Installing development dependencies with UV..."
+uv pip install .[dev]
 
 # Create state directory
 echo "Creating state directory..."

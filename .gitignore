@@ -90,6 +90,8 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
+.pytest_cache/
+.mypy_cache/
 
 # Quantum State Configurations: Local Environment Settings
 .env.local

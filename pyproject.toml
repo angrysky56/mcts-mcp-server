@@ -1,0 +1,41 @@
+[project]
+name = "mcts-mcp-server"
+version = "0.1.0" # Initial version
+description = "An MCP server exposing an Advanced Bayesian Monte Carlo Tree Search engine."
+authors = [
+    { name = "Your Name/AI Agent", email = "you@example.com" }, # Placeholder
+]
+requires-python = ">=3.10"
+license = { text = "MIT" } # Assuming MIT from README
+readme = "README.md"
+
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "numpy>=1.23.0",
+    "scikit-learn>=1.2.2",
+    "scipy>=1.10.0",
+    "psutil>=5.9.0",
+    # "mcp-server", # mcp[cli] should cover this
+    # "fastmcp",    # mcp[cli] should cover this
+    "ollama",
+    "httpx",
+    "python-dotenv",
+    "openai",
+    "anthropic",
+    "google-generativeai"
+]
+
+[project.optional-dependencies]
+dev = [
+    "unittest-xml-reporting", # Example, if needed for CI or specific test outputs
+    "ruff", # Example linter/formatter
+]
+
+# Example: If you want to specify a src layout for a find tool
+# [tool.setuptools.packages.find]
+# where = ["src"]
+
+[tool.uv] # Placeholder for any uv specific configurations if needed in future
+# Example:
+# workspace = "."
+# default-toolchain = "3.10"

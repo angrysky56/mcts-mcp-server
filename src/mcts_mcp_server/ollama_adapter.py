@@ -1,299 +1,196 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Ollama LLM Adapter for MCTS
-==========================
+Ollama LLM Adapter
+==================
 
-This module adapts the Ollama API to the LLMInterface
-required by the MCTS implementation.
+This module defines the OllamaAdapter class for interacting with local Ollama models.
 """
-import asyncio
-import re
 import logging
+import os
+import httpx # For direct HTTP calls if ollama package is problematic
 import json
-from typing import List, Dict, Any, AsyncGenerator, Optional
+from typing import AsyncGenerator, List, Dict, Any, Optional
 
-try:
-    import ollama
-except ImportError:
-    raise ImportError("The ollama package is required. Install it with `pip install ollama`")
+from .base_llm_adapter import BaseLLMAdapter
 
-# Import the LLMInterface protocol - try different import paths
+# Attempt to import the official ollama package
+OLLAMA_PACKAGE_AVAILABLE = False
 try:
-    # Direct import (recommended)
-    from llm_adapter import LLMInterface
+    import ollama # type: ignore
+    OLLAMA_PACKAGE_AVAILABLE = True
 except ImportError:
-    try:
-        # Package import
-        from mcts_mcp_server.llm_adapter import LLMInterface
-    except ImportError:
-        # Load dynamically
-        import os
-        import sys
-        import importlib.util
+    pass # Handled in constructor
+
+class OllamaAdapter(BaseLLMAdapter):
+    """
+    LLM Adapter for local Ollama models.
+    """
+    DEFAULT_MODEL = "cogito:latest" # A common default, can be overridden
+
+    def __init__(self, model_name: Optional[str] = None, host: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs) # Pass kwargs like api_key (though not used by Ollama)
         
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        llm_adapter_path = os.path.join(current_dir, "llm_adapter.py")
-        
-        if os.path.exists(llm_adapter_path):
-            spec = importlib.util.spec_from_file_location("llm_adapter", llm_adapter_path)
-            llm_adapter = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(llm_adapter)
-            LLMInterface = llm_adapter.LLMInterface
+        self.model_name = model_name or self.DEFAULT_MODEL
+        self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.logger = logging.getLogger(__name__)
+        self._client_type = None # To track if 'ollama' or 'httpx' is used
+
+        if OLLAMA_PACKAGE_AVAILABLE:
+            try:
+                self.client = ollama.AsyncClient(host=self.host)
+                self._client_type = "ollama"
+                self.logger.info(f"Initialized OllamaAdapter with model: {self.model_name} using 'ollama' package via host: {self.host}")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize ollama.AsyncClient (host: {self.host}): {e}. Falling back to httpx.")
+                self.client = httpx.AsyncClient(base_url=self.host, timeout=60.0) # httpx fallback
+                self._client_type = "httpx"
         else:
-            raise ImportError(f"Could not find llm_adapter.py at {llm_adapter_path}")
-
-logger = logging.getLogger("ollama_adapter")
-
-class OllamaAdapter(LLMInterface):
-    """
-    LLM adapter that connects to local Ollama models.
-    """
-
-    def __init__(self, model_name="llama3", host="http://localhost:11434", mcp_server=None):
-        """
-        Initialize the adapter.
+            self.logger.info(f"Ollama package not found. Initializing OllamaAdapter with model: {self.model_name} using 'httpx' for host: {self.host}")
+            self.client = httpx.AsyncClient(base_url=self.host, timeout=60.0)
+            self._client_type = "httpx"
         
-        Args:
-            model_name: Name of the Ollama model to use
-            host: URL of the Ollama server
-            mcp_server: Optional MCP server instance (not used directly)
-        """
-        self.model_name = model_name
-        self.host = host
-        self.mcp_server = mcp_server
-        self._client = None
-        logger.info(f"Initialized OllamaAdapter with model {model_name} on {host}")
-        
-        # Test connection
+        # Quick health check using httpx as it's always available here
         try:
-            import httpx
-            client = httpx.Client(base_url=host, timeout=5.0)
-            response = client.get("/api/tags")
-            if response.status_code == 200:
-                models = response.json().get("models", [])
-                model_names = [m.get("name") for m in models]
-                logger.info(f"Connected to Ollama. Available models: {model_names}")
-                if self.model_name not in model_names:
-                    logger.warning(f"Model {self.model_name} not found in available models. You may need to pull it.")
-            else:
-                logger.warning(f"Failed to get models from Ollama: {response.status_code}")
+            # This is a synchronous check for simplicity during init
+            # In a fully async setup, this might be deferred or handled differently
+            # Using httpx directly for the health check regardless of client type for simplicity here.
+            health_check_url = f"{self.host.rstrip('/')}/"
+            response = httpx.get(health_check_url)
+            response.raise_for_status()
+            self.logger.info(f"Ollama server health check successful for {health_check_url}")
         except Exception as e:
-            logger.warning(f"Could not connect to Ollama server at {host}: {e}")
+            self.logger.error(f"Ollama server at {self.host} is not responding: {e}")
+            # We don't raise here, but get_completion/streaming will fail.
 
-    async def get_completion(self, model: str, messages: List[Dict[str, str]], **kwargs) -> str:
-        """Gets a non-streaming completion from the Ollama model."""
-        try:
-            # Extract the relevant content from messages
-            if not messages:
-                return "No input provided."
-            
-            # Check if it's a chat completion or regular completion
-            if len(messages) > 1 or messages[0].get("role") in ["user", "system", "assistant"]:
-                # Use chat API for chat-style prompts
-                response = await asyncio.to_thread(
-                    ollama.chat,
-                    model=model or self.model_name,
-                    messages=messages,
-                    stream=False
+    async def get_completion(self, model: Optional[str], messages: List[Dict[str, str]], **kwargs) -> str: # Removed default for model
+        target_model = model if model is not None else self.model_name # Check for None explicitly
+        self.logger.debug(f"Ollama get_completion using model: {target_model}, client: {self._client_type}, messages: {messages}, kwargs: {kwargs}")
+
+        if self._client_type == "ollama" and OLLAMA_PACKAGE_AVAILABLE:
+            try:
+                # Ensure client is the correct type for type checker, though it should be
+                if not isinstance(self.client, ollama.AsyncClient):
+                    raise TypeError("Ollama client not initialized correctly for 'ollama' package.")
+
+                response = await self.client.chat(
+                    model=target_model,
+                    messages=messages, # type: ignore
+                    options=kwargs.get("options"),
                 )
-                content = response.get("message", {}).get("content", "")
-            else:
-                # Use generate API for standard prompts
-                prompt = messages[0].get("content", "")
-                response = await asyncio.to_thread(
-                    ollama.generate,
-                    model=model or self.model_name,
-                    prompt=prompt,
-                    stream=False
-                )
-                content = response.get("response", "")
-            
-            # Clean content of <think> tags if present
-            if content and "<think>" in content:
-                # First try to remove entire <think> blocks
-                clean_attempt = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-                # If that removes everything, keep the original but strip just the tags
-                if not clean_attempt.strip():
-                    content = re.sub(r'</?think>', '', content)
-                else:
-                    content = clean_attempt
-            
-            return content
-        except Exception as e:
-            logger.error(f"Error in get_completion: {e}")
-            return f"Error: {str(e)}"
+                return response['message']['content']
+            except Exception as e:
+                self.logger.error(f"Ollama package API error in get_completion: {e}", exc_info=True)
+                return f"Error: Ollama package request failed - {type(e).__name__}: {e}"
+        else: # Fallback or primary httpx usage
+            try:
+                if not isinstance(self.client, httpx.AsyncClient):
+                     raise TypeError("HTTPX client not initialized correctly.")
+                payload = {
+                    "model": target_model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": kwargs.get("options")
+                }
+                response = await self.client.post("/api/chat", json=payload)
+                response.raise_for_status()
+                data = response.json()
+                return data['message']['content']
+            except httpx.HTTPStatusError as e:
+                self.logger.error(f"Ollama HTTP API error in get_completion: {e.response.text}", exc_info=True)
+                return f"Error: Ollama HTTP API request failed - {e.response.status_code}: {e.response.text}"
+            except Exception as e:
+                self.logger.error(f"Unexpected error in Ollama (httpx) get_completion: {e}", exc_info=True)
+                return f"Error: Unexpected error during Ollama (httpx) request - {type(e).__name__}: {e}"
 
-    async def get_streaming_completion(self, model: str, messages: List[Dict[str, str]], **kwargs) -> AsyncGenerator[str, None]:
-        """Gets a streaming completion from the Ollama model."""
-        try:
-            # Similar logic to get_completion but with streaming
-            if not messages:
-                yield "No input provided."
-                return
-            
-            if len(messages) > 1 or messages[0].get("role") in ["user", "system", "assistant"]:
-                # Use chat API
-                response_stream = ollama.chat(
-                    model=model or self.model_name,
-                    messages=messages,
-                    stream=True
-                )
-                
-                for chunk in response_stream:
-                    yield chunk.get("message", {}).get("content", "")
-            else:
-                # Use generate API
-                prompt = messages[0].get("content", "")
-                response_stream = ollama.generate(
-                    model=model or self.model_name,
-                    prompt=prompt,
-                    stream=True
-                )
-                
-                for chunk in response_stream:
-                    yield chunk.get("response", "")
-        except Exception as e:
-            logger.error(f"Error in get_streaming_completion: {e}")
-            yield f"Error: {str(e)}"
+    async def get_streaming_completion(self, model: Optional[str], messages: List[Dict[str, str]], **kwargs) -> AsyncGenerator[str, None]: # Removed default for model
+        target_model = model if model is not None else self.model_name # Check for None explicitly
+        self.logger.debug(f"Ollama get_streaming_completion using model: {target_model}, client: {self._client_type}, messages: {messages}, kwargs: {kwargs}")
 
-    async def generate_thought(self, context: Dict[str, Any], config: Dict[str, Any]) -> str:
-        """Generates a critical thought or new direction based on context."""
-        try:
-            from mcts_core import THOUGHTS_PROMPT
-            
-            # Format the prompt with context
-            prompt = THOUGHTS_PROMPT.format(**context)
-            
-            # Send to Ollama
-            messages = [{"role": "user", "content": prompt}]
-            return await self.get_completion(self.model_name, messages)
-        except Exception as e:
-            logger.error(f"Error in generate_thought: {e}")
-            return f"Error generating thought: {str(e)}"
+        if self._client_type == "ollama" and OLLAMA_PACKAGE_AVAILABLE:
+            try:
+                if not isinstance(self.client, ollama.AsyncClient):
+                    raise TypeError("Ollama client not initialized correctly for 'ollama' package.")
 
-    async def update_analysis(self, critique: str, context: Dict[str, Any], config: Dict[str, Any]) -> str:
-        """Revises analysis based on critique and context."""
-        try:
-            from mcts_core import UPDATE_PROMPT
-            
-            # Add the critique to the context
-            context["improvements"] = critique
-            
-            # Format the prompt
-            prompt = UPDATE_PROMPT.format(**context)
-            
-            # Send to Ollama
-            messages = [{"role": "user", "content": prompt}]
-            return await self.get_completion(self.model_name, messages)
-        except Exception as e:
-            logger.error(f"Error in update_analysis: {e}")
-            return f"Error updating analysis: {str(e)}"
+                async for part in await self.client.chat(
+                    model=target_model,
+                    messages=messages, # type: ignore
+                    stream=True,
+                    options=kwargs.get("options")
+                ):
+                    yield part['message']['content']
+            except Exception as e:
+                self.logger.error(f"Ollama package API error in get_streaming_completion: {e}", exc_info=True)
+                yield f"Error: Ollama package streaming request failed - {type(e).__name__}: {e}"
+        else: # Fallback or primary httpx usage
+            try:
+                if not isinstance(self.client, httpx.AsyncClient):
+                     raise TypeError("HTTPX client not initialized correctly.")
+                payload = {
+                    "model": target_model,
+                    "messages": messages,
+                    "stream": True,
+                    "options": kwargs.get("options")
+                }
+                async with self.client.stream("POST", "/api/chat", json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                if data.get("message") and data["message"].get("content"):
+                                    yield data["message"]["content"]
+                                if data.get("done") and data.get("error"): # Check for stream error part
+                                    self.logger.error(f"Ollama stream error part: {data.get('error')}")
+                                    yield f"Error: {data.get('error')}"
+                            except json.JSONDecodeError:
+                                self.logger.warning(f"Ollama stream: Could not decode JSON line: {line}")
+            except httpx.HTTPStatusError as e:
+                self.logger.error(f"Ollama HTTP API error in get_streaming_completion: {e.response.text}", exc_info=True)
+                yield f"Error: Ollama HTTP API streaming request failed - {e.response.status_code}: {e.response.text}"
+            except Exception as e:
+                self.logger.error(f"Unexpected error in Ollama (httpx) get_streaming_completion: {e}", exc_info=True)
+                yield f"Error: Unexpected error during Ollama (httpx) streaming request - {type(e).__name__}: {e}"
 
-    async def evaluate_analysis(self, analysis_to_evaluate: str, context: Dict[str, Any], config: Dict[str, Any]) -> int:
-        """Evaluates analysis quality (1-10 score)."""
-        try:
-            from mcts_core import EVAL_ANSWER_PROMPT
-            
-            # Add the analysis to the context
-            context['answer_to_evaluate'] = analysis_to_evaluate
-            
-            # Format the prompt
-            prompt = EVAL_ANSWER_PROMPT.format(**context)
-            
-            # Send to Ollama
-            messages = [{"role": "user", "content": prompt}]
-            response = await self.get_completion(self.model_name, messages)
-            
-            # Extract the numeric score from the response
-            score_matches = re.findall(r'\b([0-9]|10)\b', response)
-            if score_matches:
-                # Get the first numeric match that could be a score
-                try:
-                    score = int(score_matches[0])
-                    # Ensure score is in range 1-10
-                    return max(1, min(10, score))
-                except ValueError:
-                    logger.warning(f"Could not parse score from response: '{response}'. Defaulting to 5.")
-                    return 5
-            else:
-                logger.warning(f"No score found in response: '{response}'. Defaulting to 5.")
-                return 5
-        except Exception as e:
-            logger.warning(f"Error in evaluate_analysis: {e}. Defaulting to 5.")
-            return 5
+# Example usage
+async def _test_ollama_adapter():
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
-    async def generate_tags(self, analysis_text: str, config: Dict[str, Any]) -> List[str]:
-        """Generates keyword tags for the analysis."""
-        try:
-            from mcts_core import TAG_GENERATION_PROMPT
-            
-            # Format the prompt
-            prompt = TAG_GENERATION_PROMPT.format(analysis_text=analysis_text)
-            
-            # Send to Ollama
-            messages = [{"role": "user", "content": prompt}]
-            response = await self.get_completion(self.model_name, messages)
-            
-            # Parse the response into tags
-            # Clean and parse the response
-            response = response.strip()
-            # Split by commas or newlines
-            if ',' in response:
-                tags = [tag.strip() for tag in response.split(',')]
-            else:
-                tags = [tag.strip() for tag in response.split('\n')]
-            
-            # Filter out empty tags and normalize
-            tags = [tag.lower() for tag in tags if tag]
-            
-            # Truncate to a maximum of 5 tags
-            return tags[:5]
-        except Exception as e:
-            logger.error(f"Error in generate_tags: {e}")
-            return ["error"]
+    # This test assumes Ollama server is running and the model is available.
+    # Example: ollama pull cogito:latest
+    # You might need to set OLLAMA_HOST if it's not localhost:11434
+    # os.environ["OLLAMA_HOST"] = "http://your_ollama_host:port"
 
-    async def synthesize_result(self, context: Dict[str, Any], config: Dict[str, Any]) -> str:
-        """Generates a final synthesis based on the MCTS results."""
-        try:
-            from mcts_core import FINAL_SYNTHESIS_PROMPT
-            
-            # Format the prompt
-            prompt = FINAL_SYNTHESIS_PROMPT.format(**context)
-            
-            # Send to Ollama
-            messages = [{"role": "user", "content": prompt}]
-            return await self.get_completion(self.model_name, messages)
-        except Exception as e:
-            logger.error(f"Error in synthesize_result: {e}")
-            return f"Error synthesizing result: {str(e)}"
+    try:
+        adapter = OllamaAdapter(model_name="cogito:latest")
 
-    async def classify_intent(self, text_to_classify: str, config: Dict[str, Any]) -> str:
-        """Classifies user intent using the LLM."""
-        try:
-            from mcts_core import INTENT_CLASSIFIER_PROMPT
-            
-            # Format the prompt
-            prompt = INTENT_CLASSIFIER_PROMPT.format(raw_input_text=text_to_classify)
-            
-            # Send to Ollama
-            messages = [{"role": "user", "content": prompt}]
-            response = await self.get_completion(self.model_name, messages)
-            
-            # Extract the classification from the response
-            # Look for any of the expected intents in the response
-            intent_types = [
-                "ANALYZE_NEW", "CONTINUE_ANALYSIS", "ASK_LAST_RUN_SUMMARY",
-                "ASK_PROCESS", "ASK_CONFIG", "GENERAL_CONVERSATION"
-            ]
-            
-            for intent in intent_types:
-                if intent in response.upper():
-                    return intent
-            
-            # Default to ANALYZE_NEW if we couldn't find a match
-            logger.warning(f"Could not determine intent from response: '{response}'. Defaulting to ANALYZE_NEW.")
-            return "ANALYZE_NEW"
-        except Exception as e:
-            logger.error(f"Error in classify_intent: {e}")
-            return "ANALYZE_NEW"  # Default on error
+        logger.info("Testing get_completion with OllamaAdapter...")
+        messages = [{"role": "user", "content": "Why is the sky blue?"}]
+        response = await adapter.get_completion(messages=messages)
+        logger.info(f"Completion response: {response}")
+        assert response and "Error:" not in response # Basic check
+
+        logger.info("\nTesting get_streaming_completion with OllamaAdapter...")
+        full_streamed_response = ""
+        async for chunk in adapter.get_streaming_completion(messages=messages):
+            logger.info(f"Stream chunk: '{chunk}'")
+            full_streamed_response += chunk
+        logger.info(f"Full streamed response: {full_streamed_response}")
+        assert full_streamed_response and "Error:" not in full_streamed_response
+
+        logger.info("\nTesting generate_tags (via BaseLLMAdapter) with OllamaAdapter...")
+        tags_text = "The quick brown fox jumps over the lazy dog. This is a test for ollama adapter."
+        tags = await adapter.generate_tags(analysis_text=tags_text, config={})
+        logger.info(f"Generated tags: {tags}")
+        assert tags and "Error:" not in tags[0] if tags else True
+
+
+        logger.info("OllamaAdapter tests completed successfully (assuming Ollama server is running and model is available).")
+    except Exception as e:
+        logger.error(f"Error during OllamaAdapter test: {e}", exc_info=True)
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(_test_ollama_adapter())
