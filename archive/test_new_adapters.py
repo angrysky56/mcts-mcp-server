@@ -38,6 +38,8 @@ class TestNewAdapters(unittest.TestCase):
     @unittest.skipIf(OpenAIAdapter is None, "OpenAIAdapter not imported")
     @patch.dict(os.environ, {}, clear=True) # Start with a clean environment
     def test_openai_adapter_no_key(self):
+        if OpenAIAdapter is None:
+            self.skipTest("OpenAIAdapter not available")
         logger.info("Testing OpenAIAdapter initialization without API key...")
         with self.assertRaisesRegex(ValueError, "OpenAI API key not provided"):
             OpenAIAdapter()
@@ -47,6 +49,8 @@ class TestNewAdapters(unittest.TestCase):
     @patch("openai.AsyncOpenAI") # Mock the actual client
     @async_test
     async def test_openai_adapter_with_key_mocked_completion(self, MockAsyncOpenAI):
+        if OpenAIAdapter is None:
+            self.skipTest("OpenAIAdapter not available")
         logger.info("Testing OpenAIAdapter with key and mocked completion...")
         # Configure the mock client and its methods
         mock_client_instance = MockAsyncOpenAI.return_value
@@ -64,6 +68,8 @@ class TestNewAdapters(unittest.TestCase):
     @unittest.skipIf(AnthropicAdapter is None, "AnthropicAdapter not imported")
     @patch.dict(os.environ, {}, clear=True)
     def test_anthropic_adapter_no_key(self):
+        if AnthropicAdapter is None:
+            self.skipTest("AnthropicAdapter not available")
         logger.info("Testing AnthropicAdapter initialization without API key...")
         with self.assertRaisesRegex(ValueError, "Anthropic API key not provided"):
             AnthropicAdapter()
@@ -73,6 +79,8 @@ class TestNewAdapters(unittest.TestCase):
     @patch("anthropic.AsyncAnthropic") # Mock the actual client
     @async_test
     async def test_anthropic_adapter_with_key_mocked_completion(self, MockAsyncAnthropic):
+        if AnthropicAdapter is None:
+            self.skipTest("AnthropicAdapter not available")
         logger.info("Testing AnthropicAdapter with key and mocked completion...")
         mock_client_instance = MockAsyncAnthropic.return_value
         mock_completion_response = AsyncMock()
@@ -94,6 +102,8 @@ class TestNewAdapters(unittest.TestCase):
     @unittest.skipIf(GeminiAdapter is None, "GeminiAdapter not imported")
     @patch.dict(os.environ, {}, clear=True)
     def test_gemini_adapter_no_key(self):
+        if GeminiAdapter is None:
+            self.skipTest("GeminiAdapter not available")
         logger.info("Testing GeminiAdapter initialization without API key...")
         with self.assertRaisesRegex(ValueError, "Gemini API key not provided"):
             GeminiAdapter()
@@ -104,6 +114,8 @@ class TestNewAdapters(unittest.TestCase):
     @patch("google.generativeai.configure") # Mock configure
     @async_test
     async def test_gemini_adapter_with_key_mocked_completion(self, mock_genai_configure, MockGenerativeModel):
+        if GeminiAdapter is None:
+            self.skipTest("GeminiAdapter not available")
         logger.info("Testing GeminiAdapter with key and mocked completion...")
         mock_model_instance = MockGenerativeModel.return_value
         # Ensure the mock response object has a 'text' attribute directly if that's what's accessed

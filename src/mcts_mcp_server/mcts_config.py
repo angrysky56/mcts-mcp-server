@@ -1,14 +1,12 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 MCTS Configurations
 ===================
 
 This module stores default configurations, taxonomies, and metadata for the MCTS package.
 """
-from typing import Dict, Any, List
+from typing import Any
 
-DEFAULT_CONFIG: Dict[str, Any] = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "max_children": 6,               # Reduced from 10 to speed up processing
     "exploration_weight": 3.0,
     "max_iterations": 1,
@@ -39,7 +37,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "enable_state_persistence": True,
 }
 
-APPROACH_TAXONOMY: Dict[str, List[str]] = {
+APPROACH_TAXONOMY: dict[str, list[str]] = {
     "empirical": ["evidence", "data", "observation", "experiment"],
     "rational": ["logic", "reason", "deduction", "principle"],
     "phenomenological": ["experience", "perception", "consciousness"],
@@ -63,7 +61,7 @@ APPROACH_TAXONOMY: Dict[str, List[str]] = {
     "initial": [],
 }
 
-APPROACH_METADATA: Dict[str, Dict[str, str]] = {
+APPROACH_METADATA: dict[str, dict[str, str]] = {
     "empirical": {"family": "epistemology"},
     "rational": {"family": "epistemology"},
     "phenomenological": {"family": "epistemology"},
@@ -86,3 +84,6 @@ APPROACH_METADATA: Dict[str, Dict[str, str]] = {
     "variant": {"family": "general"},
     "initial": {"family": "general"},
 }
+
+# State format version for serialization compatibility
+STATE_FORMAT_VERSION = "0.8.0"

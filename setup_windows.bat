@@ -1,42 +1,50 @@
 @echo off
 REM MCTS MCP Server Setup Script for Windows
-REM This script calls the cross-platform Python setup script
+REM Simple wrapper around the Python setup script
 
-echo 🚀 Starting MCTS MCP Server setup...
-echo Platform: Windows
+echo 🚀 MCTS MCP Server Setup
+echo ========================
 
-REM Check if Python is available
-python --version >nul 2>&1
+REM Check if uv is installed
+uv --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ❌ Python is not installed or not in PATH
-    echo Please install Python 3.10+ from https://python.org and try again
-    echo Make sure to check "Add Python to PATH" during installation
+    echo ❌ uv not found. Please install uv first:
+    echo    pip install uv
+    echo    Or visit: https://docs.astral.sh/uv/getting-started/installation/
+    echo    Then run this script again.
+    echo.
     pause
     exit /b 1
 )
 
-REM Check Python version
-for /f "tokens=2" %%i in ('python --version 2^>^&1') do set python_version=%%i
-echo ✅ Python %python_version% found
+echo ✅ Found uv
 
-REM Run the cross-platform setup script
-echo 🔧 Running setup script...
-python setup.py
+REM Check if we're in the right directory
+if not exist "pyproject.toml" (
+    echo ❌ pyproject.toml not found
+    echo Please run this script from the project root directory
+    echo.
+    pause
+    exit /b 1
+)
+
+echo ✅ Project structure verified
+
+REM Run the Python setup script
+echo 🔧 Running setup...
+uv run python setup.py
 
 if %errorlevel% neq 0 (
-    echo ❌ Setup failed. Please check the error messages above.
+    echo ❌ Setup failed
     pause
     exit /b 1
 )
 
 echo.
-echo 🎉 Setup script completed!
-echo.
+echo 🎉 Setup complete!
 echo Next steps:
-echo 1. Edit .env file to add your API keys
-echo 2. Add claude_desktop_config.json contents to your Claude Desktop config
+echo 1. Edit .env and add your API keys
+echo 2. Add claude_desktop_config.json to Claude Desktop
 echo 3. Restart Claude Desktop
-echo.
-echo For detailed instructions, see README.md
 echo.
 pause

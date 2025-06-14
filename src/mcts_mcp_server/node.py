@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Node Class for MCTS
 ====================
 
 This module defines the Node class used in the Monte Carlo Tree Search.
 """
-import random
-import math
 import logging
-from typing import Optional, List, Dict, Any
+import random
+from typing import Any, Optional
 
 # DEFAULT_CONFIG is now in mcts_config
 from .mcts_config import DEFAULT_CONFIG
+
 # truncate_text is now in utils
 from .utils import truncate_text
 
@@ -20,12 +19,31 @@ from .utils import truncate_text
 logger = logging.getLogger(__name__)
 
 class Node:
-    """Represents a node in the Monte Carlo Tree Search."""
+    """
+    Represents a node in the Monte Carlo Tree Search tree.
+
+    Each node contains analysis content, maintains tree relationships, tracks visit statistics,
+    and supports both Bayesian and non-Bayesian evaluation modes.
+    """
     __slots__ = [
-        'id', 'content', 'parent', 'children', 'visits', 'raw_scores',
-        'sequence', 'is_surprising', 'surprise_explanation', 'approach_type',
-        'approach_family', 'thought', 'max_children', 'use_bayesian_evaluation',
-        'alpha', 'beta', 'value', 'descriptive_tags'
+        'alpha',
+        'approach_family',
+        'approach_type',
+        'beta',
+        'children',
+        'content',
+        'descriptive_tags',
+        'id',
+        'is_surprising',
+        'max_children',
+        'parent',
+        'raw_scores',
+        'sequence',
+        'surprise_explanation',
+        'thought',
+        'use_bayesian_evaluation',
+        'value',
+        'visits'
     ]
 
     def __init__(self,
@@ -39,14 +57,29 @@ class Node:
                  use_bayesian_evaluation: bool = DEFAULT_CONFIG["use_bayesian_evaluation"],
                  beta_prior_alpha: float = DEFAULT_CONFIG["beta_prior_alpha"],
                  beta_prior_beta: float = DEFAULT_CONFIG["beta_prior_beta"],
-                 **kwargs): # Allow arbitrary kwargs for flexibility if needed
+                 **kwargs) -> None:
+        """
+        Initialize a new MCTS node.
 
+        Args:
+            content: The analysis content stored in this node
+            parent: Parent node in the tree (None for root)
+            sequence: Unique sequence number for node identification
+            thought: The thought that generated this node's content
+            approach_type: Classification of the analytical approach used
+            approach_family: Higher-level grouping of the approach
+            max_children: Maximum number of children this node can have
+            use_bayesian_evaluation: Whether to use Bayesian or simple averaging
+            beta_prior_alpha: Alpha parameter for Beta prior distribution
+            beta_prior_beta: Beta parameter for Beta prior distribution
+            **kwargs: Additional arguments for alpha, beta, or value initialization
+        """
         self.id = "node_" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz", k=4))
         self.content = content
         self.parent = parent
-        self.children: List["Node"] = [] # Explicitly type children
+        self.children: list[Node] = [] # Explicitly type children
         self.visits = 0
-        self.raw_scores: List[float] = [] # Explicitly type raw_scores
+        self.raw_scores: list[float] = [] # Explicitly type raw_scores
         self.sequence = sequence
         self.is_surprising = False
         self.surprise_explanation = ""
@@ -55,7 +88,7 @@ class Node:
         self.thought = thought
         self.max_children = max_children
         self.use_bayesian_evaluation = use_bayesian_evaluation
-        self.descriptive_tags: List[str] = [] # Explicitly type descriptive_tags
+        self.descriptive_tags: list[str] = [] # Explicitly type descriptive_tags
 
         if self.use_bayesian_evaluation:
             # Use passed priors if available in kwargs, otherwise defaults
@@ -68,16 +101,46 @@ class Node:
             self.beta = None
 
     def add_child(self, child: "Node") -> "Node":
+        """
+        Add a child node to this node.
+
+        Args:
+            child: The child node to add
+
+        Returns:
+            The added child node (for method chaining)
+
+        Note:
+            Automatically sets the child's parent reference to this node
+        """
         child.parent = self
         self.children.append(child)
         return child
 
     def fully_expanded(self) -> bool:
+        """
+        Check if this node has reached its maximum number of children.
+
+        Returns:
+            True if the node cannot have more children, False otherwise
+
+        Note:
+            Counts only non-None children in case of sparse child lists
+        """
         # Check against actual children added, not just list length if Nones are possible
         valid_children_count = sum(1 for child in self.children if child is not None)
         return valid_children_count >= self.max_children
 
     def get_bayesian_mean(self) -> float:
+        """
+        Calculate the Bayesian mean estimate for this node's quality.
+
+        Returns:
+            Mean of the Beta distribution (alpha / (alpha + beta)) in range [0, 1]
+
+        Note:
+            Only meaningful when use_bayesian_evaluation is True
+        """
         if self.use_bayesian_evaluation and self.alpha is not None and self.beta is not None:
             alpha_safe = max(1e-9, self.alpha)
             beta_safe = max(1e-9, self.beta)
@@ -85,7 +148,15 @@ class Node:
         return 0.5 # Default
 
     def get_average_score(self) -> float:
-        """Returns score normalized to 0-10 scale."""
+        """
+        Get the average quality score for this node on a 0-10 scale.
+
+        Returns:
+            Average score normalized to 0-10 range
+
+        Note:
+            Uses Bayesian mean * 10 if Bayesian mode, otherwise cumulative value / visits
+        """
         if self.use_bayesian_evaluation:
             return self.get_bayesian_mean() * 10.0
         else:
@@ -100,7 +171,15 @@ class Node:
                  return 5.0 # Default mid-point score
 
     def thompson_sample(self) -> float:
-        """Samples from the Beta distribution if Bayesian, else returns midpoint."""
+        """
+        Generate a Thompson sampling value from the node's Beta distribution.
+
+        Returns:
+            Random sample from Beta(alpha, beta) distribution in range [0, 1]
+
+        Note:
+            Falls back to Bayesian mean if numpy is unavailable or sampling fails
+        """
         if self.use_bayesian_evaluation and self.alpha is not None and self.beta is not None:
             alpha_safe = max(1e-9, self.alpha)
             beta_safe = max(1e-9, self.beta)
@@ -112,21 +191,34 @@ class Node:
                 logger.warning("Numpy not available for Thompson sampling. Using Bayesian mean.")
                 return self.get_bayesian_mean()
             except Exception as e:
-                logger.warning(f"Thompson sample failed for node {self.sequence} (α={alpha_safe}, β={beta_safe}): {e}. Using mean.")
+                logger.warning(f"Thompson sample failed for node {self.sequence} (alpha={alpha_safe}, beta={beta_safe}): {e}. Using mean.")
                 return self.get_bayesian_mean()
         return 0.5 # Default
 
     def best_child(self) -> Optional["Node"]:
-        """Finds best child based on visits then score."""
-        if not self.children: return None
+        """
+        Find the best child node based on visit count and quality score.
+
+        Returns:
+            The child node with highest visits (tie-broken by score), or None if no children
+
+        Algorithm:
+            1. Find children with maximum visit count
+            2. If tied, select highest scoring child
+            3. Return None if no children have been visited
+        """
+        if not self.children:
+            return None
         valid_children = [c for c in self.children if c is not None]
-        if not valid_children: return None
+        if not valid_children:
+            return None
 
         # Prioritize visits
         most_visited_child = max(valid_children, key=lambda c: c.visits)
         max_visits = most_visited_child.visits
         # If no child has been visited, return None or random? Let's return None.
-        if max_visits == 0: return None
+        if max_visits == 0:
+            return None
 
         # Get all children with max visits (potential ties)
         tied_children = [c for c in valid_children if c.visits == max_visits]
@@ -143,9 +235,16 @@ class Node:
             # Non-Bayesian: Higher average score is better
             best_score_child = max(tied_children, key=lambda c: c.get_average_score())
             return best_score_child
+    def node_to_json(self) -> dict[str, Any]:
+        """
+        Create a comprehensive dictionary representation for debugging and output.
 
-    def node_to_json(self) -> Dict:
-        """Creates a dictionary representation for verbose output/debugging."""
+        Returns:
+            Dictionary containing all node information including recursive children
+
+        Note:
+            Includes full tree structure - use with caution for large trees
+        """
         score = self.get_average_score()
         valid_children = [child for child in self.children if child is not None]
         base_json = {
@@ -169,8 +268,16 @@ class Node:
             base_json["value_cumulative"] = round(self.value, 2)
         return base_json
 
-    def node_to_state_dict(self) -> Dict:
-        """Creates a dictionary representation suitable for state persistence."""
+    def node_to_state_dict(self) -> dict[str, Any]:
+        """
+        Create a dictionary representation suitable for state persistence.
+
+        Returns:
+            Dictionary containing essential node state without recursive children
+
+        Note:
+            Optimized for serialization and state saving/loading
+        """
         score = self.get_average_score()
         state = {
             "id": self.id,
@@ -192,6 +299,12 @@ class Node:
         return state
 
     def __repr__(self) -> str:
+        """
+        Create a concise string representation of the node.
+
+        Returns:
+            String containing key node information for debugging
+        """
         score = self.get_average_score()
         return (f"Node(Seq:{self.sequence}, Score:{score:.2f}, Visits:{self.visits}, "
                 f"Approach:'{self.approach_type}', Children:{len(self.children)}, "

@@ -6,13 +6,10 @@ Ollama Utilities for MCTS
 This module provides utility functions and constants for interacting with Ollama.
 """
 import logging
-import os
 import sys
-import importlib.util
 import subprocess
 import httpx # Used by check_available_models
-import json # Used by check_available_models
-from typing import List, Dict, Any # Optional was unused
+from typing import List, Dict # Optional was unused
 
 # Setup logger for this module
 logger = logging.getLogger(__name__)
@@ -70,11 +67,13 @@ def check_available_models() -> List[str]:
                 lines = lines[1:]
 
             for line in lines:
-                if not line.strip(): continue
+                if not line.strip():
+                    continue
                 parts = line.split()
                 if parts:
                     model_name = parts[0]
-                    if ':' not in model_name: model_name += ':latest'
+                    if ':' not in model_name:
+                        model_name += ':latest'
                     available_models.append(model_name)
             if available_models:
                 logger.info(f"Available Ollama models via subprocess: {available_models} (ollama_utils)")
@@ -108,16 +107,22 @@ def check_available_models() -> List[str]:
             models_response = ollama.list()
 
             package_models = []
-            if hasattr(models_response, 'models') and hasattr(models_response.models, '__iter__'): # Modern ollama package
-                for model_obj in models_response.models:
-                    if hasattr(model_obj, 'model') and isinstance(model_obj.model, str): # New Pydantic field
-                        package_models.append(model_obj.model)
-                    elif hasattr(model_obj, 'name') and isinstance(model_obj.name, str): # Older field
-                        package_models.append(model_obj.name)
-            elif isinstance(models_response, dict) and "models" in models_response: # Older dict format
-                 for model_dict in models_response["models"]:
+            if isinstance(models_response, dict) and "models" in models_response: # Handle dict format
+                for model_dict in models_response["models"]:
                     if isinstance(model_dict, dict) and "name" in model_dict:
                         package_models.append(model_dict["name"])
+            else: # Handle object format
+                try:
+                    for model_obj in getattr(models_response, 'models', []):
+                        model_name = None
+                        if hasattr(model_obj, 'model'):
+                            model_name = getattr(model_obj, 'model')
+                        elif hasattr(model_obj, 'name'):
+                            model_name = getattr(model_obj, 'name')
+                        if isinstance(model_name, str):
+                            package_models.append(model_name)
+                except (AttributeError, TypeError):
+                    pass
 
             if package_models:
                 logger.info(f"Available Ollama models via ollama package: {package_models} (ollama_utils)")

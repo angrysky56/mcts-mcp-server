@@ -12,7 +12,7 @@ import json
 import re
 import os # Moved here
 from collections import namedtuple
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 # DEFAULT_CONFIG is now in mcts_config
 from .mcts_config import DEFAULT_CONFIG
@@ -209,24 +209,26 @@ You can adjust parameters via the configuration."""
                  for app, alpha_val in alphas.items(): # Renamed alpha to alpha_val
                      beta_val = betas.get(app, 1.0) # Renamed beta to beta_val
                      alpha_val, beta_val = max(1e-9, alpha_val), max(1e-9, beta_val)
-                     if alpha_val + beta_val > 1e-9: means[app] = (alpha_val / (alpha_val + beta_val)) * 10
+                     if alpha_val + beta_val > 1e-9:
+                         means[app] = (alpha_val / (alpha_val + beta_val)) * 10
                  if means:
                      sorted_means = sorted(means.items(), key=lambda item: item[1], reverse=True)
                      top = [f"{app} ({score:.1f})" for app, score in sorted_means[:3]]
                      summary += f"- **Learned Approach Preferences:** Favored {', '.join(top)}...\n"
-                 else: summary += "- **Learned Approach Preferences:** (No valid priors loaded)\n"
+                 else:
+                     summary += "- **Learned Approach Preferences:** (No valid priors loaded)\n"
 
              unfit = loaded_state.get("unfit_markers", [])
              if unfit:
                   first_unfit = unfit[0]
                   summary += f"- **Potential Unfit Areas Noted:** {len(unfit)} (e.g., '{first_unfit.get('summary','...')}' due to {first_unfit.get('reason','...')})\n"
-             else: summary += "- **Potential Unfit Areas Noted:** None\n"
+             else:
+                 summary += "- **Potential Unfit Areas Noted:** None\n"
 
              return IntentResult(type='message', data=summary)
          except Exception as e:
              logger.error(f"Error formatting last run summary: {e}", exc_info=True)
              return IntentResult(type='error', data="Could not display summary of last run.")
-
     async def handle_general_conversation(self) -> IntentResult:
         logger.info("Handling intent: GENERAL_CONVERSATION")
         # This is a placeholder, actual LLM call would be made by the calling service

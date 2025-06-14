@@ -7,57 +7,57 @@ Core MCTS Implementation
 This module implements the Monte Carlo Tree Search (MCTS) algorithm
 for advanced analysis and reasoning.
 """
-import logging
-import random
-import math
 import asyncio
+import copy  # Added for deep copy
+import logging
+import math
+import random
 import re
+
 # import json # No longer used directly
 # import os # No longer used directly
 # import sqlite3 # No longer used directly
 # from datetime import datetime # No longer used directly
-from collections import namedtuple, Counter
-from typing import (
-    List, Optional, Dict, Any, Tuple, Set, Protocol, AsyncGenerator # Removed Union, Generator
+from collections import Counter, namedtuple
+from typing import (  # Using built-in types for Dict, List, Set, Tuple; Protocol unused
+    Any,
 )
 
 import numpy as np
 
-from .utils import (
-    setup_logger,
-    truncate_text,
-    calculate_semantic_distance,
-    _summarize_text,
-    SKLEARN_AVAILABLE
+from .intent_handler import (
+    EVAL_ANSWER_PROMPT,
+    FINAL_SYNTHESIS_PROMPT,
+    INITIAL_PROMPT,
+    INTENT_CLASSIFIER_PROMPT,
+    TAG_GENERATION_PROMPT,
+    THOUGHTS_PROMPT,
+    UPDATE_PROMPT,
+    IntentHandler,
+    IntentResult,
 )
+from .llm_interface import LLMInterface  # Moved to its own file
+
 # Note: TfidfVectorizer, ENGLISH_STOP_WORDS, cosine_similarity are now managed within utils.py
 # If mcts_core directly needs them elsewhere, specific imports might be needed,
 # but for now, they are primarily used by functions moved to utils.py.
-
-from .mcts_config import DEFAULT_CONFIG, APPROACH_TAXONOMY, APPROACH_METADATA
+from .mcts_config import APPROACH_METADATA, APPROACH_TAXONOMY, DEFAULT_CONFIG
+from .node import Node
+from .utils import (
+    SKLEARN_AVAILABLE,
+    _summarize_text,
+    calculate_semantic_distance,
+    setup_logger,
+    truncate_text,
+)
 
 # Initialize main logger for this module using the utility setup function
 logger = setup_logger(__name__)
 
-from .llm_interface import LLMInterface # Moved to its own file
 
 # ==============================================================================
 # MCTS Class
 # ==============================================================================
-
-from .node import Node
-from .intent_handler import (
-    IntentHandler,
-    IntentResult,
-    INITIAL_PROMPT,
-    THOUGHTS_PROMPT,
-    UPDATE_PROMPT,
-    EVAL_ANSWER_PROMPT,
-    TAG_GENERATION_PROMPT,
-    FINAL_SYNTHESIS_PROMPT,
-    INTENT_CLASSIFIER_PROMPT
-)
-
 # Define a simple structure to hold MCTS results
 MCTSResult = namedtuple("MCTSResult", ["best_score", "best_solution_content", "mcts_instance"])
 
@@ -68,8 +68,8 @@ class MCTS:
                  llm_interface: LLMInterface,
                  question: str,
                  initial_analysis_content: str,
-                 config: Optional[Dict[str, Any]] = None,
-                 initial_state: Optional[Dict[str, Any]] = None):
+                 config: dict[str, Any] | None = None,
+                 initial_state: dict[str, Any] | None = None):
         """
         Initializes the MCTS instance.
 
@@ -82,42 +82,61 @@ class MCTS:
         """
         self.llm = llm_interface
         self.question = question
-        self.config = config if config is not None else DEFAULT_CONFIG.copy()
+        self.config = config if config is not None else copy.deepcopy(DEFAULT_CONFIG)
         self.debug_logging = self.config.get("debug_logging", False)
         # Update logger level based on config (logger is now module-level)
         # The setup_logger in utils.py can be called again if needed,
         # or we can adjust the existing logger's level directly.
         # For now, the MCTS __init__ will set its own logger's level.
-        # This assumes `logger` refers to the module logger created by `setup_logger(__name__)`
+        # Use a dedicated logger for each MCTS instance to avoid conflicts with global logger level.
+        self.logger = logging.getLogger(f"{__name__}.MCTS.{id(self)}")
         if self.debug_logging:
-            logger.setLevel(logging.DEBUG)
+            self.logger.setLevel(logging.DEBUG)
         else:
-            logger.setLevel(logging.INFO)
+            self.logger.setLevel(logging.INFO)
+
+        # Explicitly set loaded_initial_state for consistent attribute access
+        self.loaded_initial_state = initial_state if initial_state is not None else {}
 
         self.question_summary = _summarize_text(self.question, max_words=50) # Use imported _summarize_text
-        self.loaded_initial_state = initial_state
-        self.node_sequence = 0
+        # Initialize node_sequence to avoid duplicates if loading from previous state
+        if self.loaded_initial_state and "max_sequence" in self.loaded_initial_state:
+            self.node_sequence = int(self.loaded_initial_state["max_sequence"])
+        else:
+            self.node_sequence = 0
 
         # Runtime state
         self.iterations_completed = 0
-        self.simulations_completed = 0
-        self.high_score_counter = 0 # For early stopping stability
-        self.random_state = random.Random() # Use a dedicated random instance
-        self.explored_approaches: Dict[str, List[str]] = {} # Track thoughts per approach type
-        self.explored_thoughts: Set[str] = set() # Track unique thoughts generated
-        self.approach_types: List[str] = ["initial"] # Track unique approach types encountered
-        self.surprising_nodes: List[Node] = []
-        self.memory: Dict[str, Any] = {"depth": 0, "branches": 0, "high_scoring_nodes": []}
-        self.unfit_markers: List[Dict[str, Any]] = [] # Store unfit markers loaded/identified
+        self.random_state = random.SystemRandom() # Use a cryptographically secure random instance
+        self.explored_approaches: dict[str, list[str]] = {} # Track thoughts per approach type
+        self.explored_thoughts: set[str] = set() # Track unique thoughts generated
+        self.approach_types: list[str] = ["initial"] # Track unique approach types encountered
+        self.surprising_nodes: list[Node] = []
+        # Initialize memory, loading depth and branches from initial_state if available
+        loaded_depth = self.loaded_initial_state.get("depth", 0) if hasattr(self, "loaded_initial_state") and self.loaded_initial_state else 0
+        loaded_branches = self.loaded_initial_state.get("branches", 0) if hasattr(self, "loaded_initial_state") and self.loaded_initial_state else 0
+        self.memory: dict[str, Any] = {
+            "depth": loaded_depth,
+            "branches": loaded_branches,
+            "high_scoring_nodes": [],
+        }
+        # Store unfit markers loaded/identified
+        self.unfit_markers: list[dict[str, Any]] = []
+        if hasattr(self, "loaded_initial_state") and self.loaded_initial_state:
+            loaded_unfit = self.loaded_initial_state.get("unfit_markers", [])
+            if isinstance(loaded_unfit, list):
+                self.unfit_markers = loaded_unfit
+            else:
+                logger.warning("Loaded unfit_markers is not a list; ignoring.")
 
         # --- Initialize Priors and Best Solution based on Loaded State ---
         prior_alpha = max(1e-9, self.config["beta_prior_alpha"])
         prior_beta = max(1e-9, self.config["beta_prior_beta"])
 
         # Approach Priors (for Bayesian mode)
-        self.approach_alphas: Dict[str, float] = {}
-        self.approach_betas: Dict[str, float] = {}
-        initial_priors = self.loaded_initial_state.get("approach_priors") if self.loaded_initial_state else None
+        self.approach_alphas: dict[str, float] = {}
+        self.approach_betas: dict[str, float] = {}
+        initial_priors = self.loaded_initial_state.get("approach_priors", {}) if hasattr(self, "loaded_initial_state") and self.loaded_initial_state else {}
         if (self.config["use_bayesian_evaluation"] and initial_priors and
             isinstance(initial_priors.get("alpha"), dict) and
             isinstance(initial_priors.get("beta"), dict)):
@@ -126,22 +145,22 @@ class MCTS:
             logger.info("Loaded approach priors from previous state.")
         else:
             # Initialize default priors for all known approaches + initial/variant
-            all_approach_keys = list(APPROACH_TAXONOMY.keys()) + ["initial", "variant"]
-            self.approach_alphas = {app: prior_alpha for app in all_approach_keys}
-            self.approach_betas = {app: prior_beta for app in all_approach_keys}
+            all_approach_keys = [*APPROACH_TAXONOMY.keys(), "initial", "variant"]
+            self.approach_alphas = dict.fromkeys(all_approach_keys, prior_alpha)
+            self.approach_betas = dict.fromkeys(all_approach_keys, prior_beta)
             if self.config["use_bayesian_evaluation"]:
-                 logger.info("Initialized default approach priors.")
+                logger.info("Initialized default approach priors.")
 
         # Approach Scores (for non-Bayesian mode) - Simple average tracking
-        self.approach_scores: Dict[str, float] = {} # Average score per approach
+        self.approach_scores: dict[str, float] = {} # Average score per approach
 
         # Best Solution Tracking
         self.best_score: float = 0.0
         self.best_solution: str = initial_analysis_content # Start with the initial analysis
         if self.loaded_initial_state:
             self.best_score = float(self.loaded_initial_state.get("best_score", 0.0))
-            # Keep track of the previously best solution content if needed for context,
-            # but the MCTS *starts* its search from the new initial_analysis_content.
+            # Store the previously best solution content for context or comparison purposes.
+            # This is not used as the starting point for the new search, but may be useful for reporting or analysis.
             self.previous_best_solution_content = self.loaded_initial_state.get("best_solution_content")
             logger.info(f"Initialized best score ({self.best_score}) tracker from previous state.")
             # Load unfit markers
@@ -157,30 +176,41 @@ class MCTS:
             parent=None,
             max_children=self.config["max_children"],
             use_bayesian_evaluation=self.config["use_bayesian_evaluation"],
-            beta_prior_alpha=prior_alpha, # Root starts with default priors
+            beta_prior_alpha=prior_alpha,  # Root starts with default priors
             beta_prior_beta=prior_beta,
             approach_type="initial",
-            approach_family="general"
+            approach_family="general",
         )
         # Initial simulation/backpropagation for the root node?
         # Not doing this in the original code, root starts with 0 visits/priors.
 
         logger.info(f"MCTS Initialized. Root Node Seq: {self.root.sequence}. Initial Best Score: {self.best_score:.2f}")
         if self.debug_logging:
-             logger.debug(f"Initial Root Content: {truncate_text(self.root.content, 100)}")
+            logger.debug(f"Initial Root Content: {truncate_text(self.root.content, 100)}")
 
 
     def get_next_sequence(self) -> int:
-        """Gets the next sequential ID for a node."""
+        """
+        Gets the next sequential ID for a node.
+
+        Returns:
+            The next available sequence number for node identification
+        """
         self.node_sequence += 1
         return self.node_sequence
 
-    # _summarize_text was moved to utils.py
-
-    def get_context_for_node(self, node: Node) -> Dict[str, str]:
+    def get_context_for_node(self, node: Node) -> dict[str, str]:
         """
-        Gathers context for LLM prompts based on the current MCTS state and loaded state.
-        Ensures all values are strings.
+        Gathers comprehensive context for LLM prompts based on current MCTS state.
+
+        Args:
+            node: The node to generate context for
+
+        Returns:
+            Dictionary containing all context information with string values
+
+        Note:
+            Includes context from loaded state, current run, sibling nodes, and high-scoring examples
         """
         cfg = self.config
         best_answer_str = str(self.best_solution) if self.best_solution else "N/A"
@@ -226,7 +256,8 @@ class MCTS:
                 for app, alpha in priors["alpha"].items():
                     beta = priors["beta"].get(app, 1.0)
                     alpha, beta = max(1e-9, alpha), max(1e-9, beta)
-                    if alpha + beta > 1e-9: means[app] = (alpha / (alpha + beta)) * 10
+                    if alpha + beta > 1e-9:
+                        means[app] = (alpha / (alpha + beta)) * 10
                 sorted_means = sorted(means.items(), key=lambda item: item[1], reverse=True)
                 top_approaches = [f"{app} ({score:.1f})" for app, score in sorted_means[:3]]
                 context["learned_approach_summary"] = f"Favors: {', '.join(top_approaches)}" + ("..." if len(sorted_means) > 3 else "")
@@ -253,19 +284,22 @@ class MCTS:
                             alpha, beta = max(1e-9, alpha), max(1e-9, beta)
                             if (alpha + beta) > 1e-9:
                                 score_text = f"(β-Mean: {alpha / (alpha + beta):.2f}, N={count})"
-                            else: score_text = f"(N={count})"
+                            else:
+                                score_text = f"(N={count})"
                         else:
                             score = self.approach_scores.get(app, 0) # Use simple avg score
                             count_non_bayes = sum(1 for n in self._find_nodes_by_approach(app) if n.visits > 0) # More accurate count?
                             if count_non_bayes > 0:
                                  score_text = f"(Avg: {score:.1f}, N={count_non_bayes})" # Use avg score if tracked
-                            else: score_text = f"(N={count})"
+                            else:
+                                score_text = f"(N={count})"
 
 
                         sample_count = min(2, len(thoughts))
                         sample = thoughts[-sample_count:]
                         exp_app_text.append(f"- {app} {score_text}: {'; '.join([f'{truncate_text(str(t), 50)}' for t in sample])}")
-                if exp_app_text: context["explored_approaches"] = "\n".join(exp_app_text)
+                if exp_app_text:
+                    context["explored_approaches"] = "\n".join(exp_app_text)
 
         except Exception as e:
             logger.error(f"Ctx err (approaches): {e}")
@@ -277,7 +311,7 @@ class MCTS:
                     f"- Score {score:.1f} ({app}): {truncate_text(content, 70)}"
                     for score, content, app, thought in self.memory["high_scoring_nodes"]
                 ]
-                context["high_scoring_examples"] = "\n".join(["Top Examples:"] + high_score_text)
+                context["high_scoring_examples"] = "\n".join(["Top Examples:", *high_score_text])
         except Exception as e:
             logger.error(f"Ctx err (high scores): {e}")
             context["high_scoring_examples"] = "Error generating high score context."
@@ -303,12 +337,23 @@ class MCTS:
         safe_context = {k: str(v) if v is not None else "" for k, v in context.items()}
         return safe_context
 
-
     def _calculate_uct(self, node: Node, parent_visits: int) -> float:
-        """Calculates the UCT score for a node, considering penalties and bonuses."""
+        """
+        Calculates the UCT (Upper Confidence Bound for Trees) score for node selection.
+
+        Args:
+            node: Node to calculate UCT score for
+            parent_visits: Number of visits to the parent node
+
+        Returns:
+            UCT score (higher values indicate better selection candidates)
+
+        Note:
+            Incorporates exploitation, exploration, surprise bonus, diversity bonus, and unfit penalties
+        """
         cfg = self.config
         if node.visits == 0:
-            return float('inf') # Prioritize unvisited nodes
+            return float('inf')  # Prioritize unvisited nodes
 
         # 1. Exploitation Term (normalized 0-1)
         exploitation = node.get_bayesian_mean() if cfg["use_bayesian_evaluation"] else (node.get_average_score() / 10.0)
@@ -321,25 +366,33 @@ class MCTS:
         penalty = 0.0
         is_unfit = False
         if self.unfit_markers:
-            node_summary = node.thought or node.content # Use thought if available, else content
+            node_summary = node.thought or node.content  # Use thought if available, else content
             node_tags_set = set(node.descriptive_tags)
             for marker in self.unfit_markers:
                 # Quick checks first
                 if marker.get("id") == node.id or marker.get("sequence") == node.sequence:
-                    is_unfit = True; break
+                    is_unfit = True
+                    break
+                # Check content similarity using node_summary
+                marker_summary = marker.get('summary', '')
+                if marker_summary and node_summary and calculate_semantic_distance(str(node_summary), str(marker_summary)) < 0.2:
+                    is_unfit = True
+                    break
                 # Check tag overlap
                 marker_tags_set = set(marker.get('tags', []))
                 if node_tags_set and marker_tags_set and len(node_tags_set.intersection(marker_tags_set)) > 0:
-                    is_unfit = True; break # Simple tag overlap check
+                    is_unfit = True
+                    break  # Simple tag overlap check
 
             # Apply penalty if unfit and *not* surprising (allow surprise to override)
             if is_unfit and not node.is_surprising:
-                penalty = -100.0 # Strong penalty to avoid selecting unfit nodes
-                if self.debug_logging: logger.debug(f"Applying UCT penalty to unfit Node {node.sequence}")
+                penalty = -100.0  # Strong penalty to avoid selecting unfit nodes
+                if self.debug_logging:
+                    logger.debug(f"Applying UCT penalty to unfit Node {node.sequence}")
 
 
         # 4. Surprise Bonus
-        surprise_bonus = 0.3 if node.is_surprising else 0.0 # Simple fixed bonus
+        surprise_bonus = 0.3 if node.is_surprising else 0.0  # Simple fixed bonus
 
         # 5. Diversity Bonus (relative to siblings)
         diversity_bonus = 0.0
@@ -359,8 +412,16 @@ class MCTS:
         # Ensure finite return, default to low value if not
         return uct_value if math.isfinite(uct_value) else -float('inf')
 
-    def _collect_non_leaf_nodes(self, node: Node, non_leaf_nodes: List[Node], max_depth: int, current_depth: int = 0):
-        """Helper to find nodes that can still be expanded within a depth limit."""
+    def _collect_non_leaf_nodes(self, node: Node, non_leaf_nodes: list[Node], max_depth: int, current_depth: int = 0):
+        """
+        Helper method to find nodes that can still be expanded within a depth limit.
+
+        Args:
+            node: Current node to examine
+            non_leaf_nodes: List to append expandable nodes to
+            max_depth: Maximum depth to search
+            current_depth: Current recursion depth
+        """
         if current_depth > max_depth or node is None:
             return
         # Node is non-leaf if it HAS children AND is not fully expanded yet
@@ -374,7 +435,15 @@ class MCTS:
 
 
     async def select(self) -> Node:
-        """Selects a node for expansion using UCT or Thompson Sampling."""
+        """
+        Selects a node for expansion using UCT or Thompson Sampling.
+
+        Returns:
+            Selected leaf or expandable node for the next expansion
+
+        Note:
+            Implements branch enhancement for forced exploration and handles both UCT and Thompson sampling
+        """
         cfg = self.config
         node = self.root
         selection_path_ids = [node.id] # Track path by ID
@@ -389,7 +458,8 @@ class MCTS:
             expandable_candidates = [n for n in candidate_nodes if not n.fully_expanded()]
             if expandable_candidates:
                 forced_node = self.random_state.choice(expandable_candidates)
-                if self.debug_logging: logger.debug(f"BRANCH ENHANCE: Forcing selection of Node {forced_node.sequence}")
+                if self.debug_logging:
+                    logger.debug(f"BRANCH ENHANCE: Forcing selection of Node {forced_node.sequence}")
                 # Need to return the actual node selected by force
                 return forced_node # Exit selection early with the forced node
 
@@ -425,8 +495,10 @@ class MCTS:
                 for child in valid_children:
                      try:
                          uct = self._calculate_uct(child, parent_visits)
-                         if math.isfinite(uct): uct_values.append((child, uct))
-                         else: logger.warning(f"UCT for child {child.sequence} was non-finite. Skipping.")
+                         if math.isfinite(uct):
+                             uct_values.append((child, uct))
+                         else:
+                             logger.warning(f"UCT for child {child.sequence} was non-finite. Skipping.")
                      except Exception as uct_err:
                          logger.error(f"UCT calculation error for node {child.sequence}: {uct_err}")
 
@@ -457,9 +529,19 @@ class MCTS:
 
         return node # Return the selected leaf or expandable node
 
+    def _classify_approach(self, thought: str) -> tuple[str, str]:
+        """
+        Classifies a thought into an approach type and family using keyword matching.
 
-    def _classify_approach(self, thought: str) -> Tuple[str, str]:
-        """Classifies the thought into an approach type and family using keywords."""
+        Args:
+            thought: The thought text to classify
+
+        Returns:
+            Tuple of (approach_type, approach_family)
+
+        Note:
+            Uses APPROACH_TAXONOMY for keyword matching and APPROACH_METADATA for family assignment
+        """
         approach_type = "variant" # Default if no keywords match
         approach_family = "general"
         if not thought or not isinstance(thought, str):
@@ -485,8 +567,22 @@ class MCTS:
             logger.debug(f"Classified thought '{truncate_text(thought, 50)}' as: {approach_type} ({approach_family})")
         return approach_type, approach_family
 
-    def _check_surprise(self, parent_node: Node, new_content: str, new_approach_type: str, new_approach_family: str) -> Tuple[bool, str]:
-        """Checks if the new node content/approach is surprising relative to the parent."""
+    def _check_surprise(self, parent_node: Node, new_content: str, new_approach_type: str, new_approach_family: str) -> tuple[bool, str]:
+        """
+        Checks if new node content/approach is surprising relative to parent.
+
+        Args:
+            parent_node: Parent node for comparison
+            new_content: New content to evaluate
+            new_approach_type: Approach type of new content
+            new_approach_family: Approach family of new content
+
+        Returns:
+            Tuple of (is_surprising, explanation)
+
+        Note:
+            Considers semantic distance, approach family shifts, and novelty factors
+        """
         cfg = self.config
         surprise_factors = []
         is_surprising = False
@@ -505,7 +601,8 @@ class MCTS:
                             "weight": cfg["surprise_semantic_weight"],
                             "desc": f"Semantic dist ({dist:.2f})"
                         })
-            except Exception as e: logger.warning(f"Semantic distance check failed: {e}")
+            except Exception as e:
+                logger.warning(f"Semantic distance check failed: {e}")
 
         # 2. Shift in Thought Approach Family
         parent_family = parent_node.approach_family
@@ -522,17 +619,17 @@ class MCTS:
             queue = [(self.root, 0)] if self.root else []
             processed_bfs = set()
             nodes_visited = 0
-            MAX_BFS_NODES = 100
-            MAX_BFS_DEPTH = 5
+            max_bfs_nodes = 100
+            max_bfs_depth = 5
 
-            while queue and nodes_visited < MAX_BFS_NODES:
+            while queue and nodes_visited < max_bfs_nodes:
                 curr_node, depth = queue.pop(0)
-                if curr_node is None or curr_node.id in processed_bfs or depth > MAX_BFS_DEPTH:
+                if curr_node is None or curr_node.id in processed_bfs or depth > max_bfs_depth:
                     continue
                 processed_bfs.add(curr_node.id)
                 nodes_visited += 1
                 family_counts[curr_node.approach_family] += 1
-                if depth + 1 <= MAX_BFS_DEPTH:
+                if depth + 1 <= max_bfs_depth:
                     queue.extend([(child, depth + 1) for child in curr_node.children if child is not None])
 
             # If the new family has been seen <= 1 times (itself) and isn't 'general'
@@ -542,7 +639,8 @@ class MCTS:
                     "weight": cfg["surprise_novelty_weight"],
                     "desc": f"Novel approach family ('{new_approach_family}')"
                 })
-        except Exception as e: logger.warning(f"Novelty check BFS failed: {e}", exc_info=self.debug_logging)
+        except Exception as e:
+            logger.warning(f"Novelty check BFS failed: {e}", exc_info=self.debug_logging)
 
 
         # Calculate combined weighted score
@@ -555,13 +653,24 @@ class MCTS:
                 is_surprising = True
                 factor_descs = [f"- {f['desc']} (Val:{f['value']:.2f}, W:{f['weight']:.1f})" for f in surprise_factors]
                 surprise_explanation = (f"Combined surprise ({combined_score:.2f} >= {cfg['surprise_overall_threshold']}):\n" + "\n".join(factor_descs))
-                if self.debug_logging: logger.debug(f"Surprise DETECTED for node sequence {parent_node.sequence+1}: Score={combined_score:.2f}\n{surprise_explanation}")
+                if self.debug_logging:
+                    logger.debug(f"Surprise DETECTED for node sequence {parent_node.sequence+1}: Score={combined_score:.2f}\n{surprise_explanation}")
 
         return is_surprising, surprise_explanation
 
+    async def expand(self, node: Node) -> Node | None:
+        """
+        Expands a node by generating a thought and creating a new child analysis.
 
-    async def expand(self, node: Node) -> Optional[Node]:
-        """Expands a node by generating a thought and a new analysis."""
+        Args:
+            node: Node to expand
+
+        Returns:
+            Newly created child node, or None if expansion failed
+
+        Raises:
+            Exception: If LLM calls fail or node expansion encounters errors
+        """
         cfg = self.config
         if node.fully_expanded():
              logger.warning(f"Attempted to expand fully expanded Node {node.sequence}. Returning None.")
@@ -574,35 +683,41 @@ class MCTS:
             context = self.get_context_for_node(node)
 
             # 1. Generate Thought
-            if self.debug_logging: logger.debug(f"Generating thought for Node {node.sequence}")
+            if self.debug_logging:
+                logger.debug(f"Generating thought for Node {node.sequence}")
             thought = await self.llm.generate_thought(context, cfg)
             if not isinstance(thought, str) or not thought.strip() or "Error:" in thought:
                 logger.error(f"Invalid thought generation for Node {node.sequence}: '{thought}'")
                 return None # Expansion failed
             thought = thought.strip()
-            if self.debug_logging: logger.debug(f"Node {node.sequence} -> Thought: '{truncate_text(thought, 80)}'")
+            if self.debug_logging:
+                logger.debug(f"Node {node.sequence} -> Thought: '{truncate_text(thought, 80)}'")
 
             # Check thought against unfit markers (simple check)
             is_unfit_thought = False
             if self.unfit_markers:
                  for marker in self.unfit_markers:
                       marker_summary = marker.get('summary')
-                      # if marker_summary and calculate_semantic_distance(thought, marker_summary) < 0.15: # Strict threshold
-                      #      is_unfit_thought = True
-                      #      logger.warning(f"Generated thought for Node {node.sequence} resembles unfit marker '{marker_summary}'. Skipping expansion.")
-                      #      break
-            if is_unfit_thought: return None # Skip expansion if thought seems unfit
+                      if marker_summary and calculate_semantic_distance(thought, marker_summary) < 0.15: # Strict threshold
+                           is_unfit_thought = True
+                           logger.warning(f"Generated thought for Node {node.sequence} resembles unfit marker '{marker_summary}'. Skipping expansion.")
+                           break
+            if is_unfit_thought:
+                return None # Skip expansion if thought seems unfit
 
             # Classify approach based on thought
             approach_type, approach_family = self._classify_approach(thought)
             self.explored_thoughts.add(thought)
-            if approach_type not in self.approach_types: self.approach_types.append(approach_type)
-            if approach_type not in self.explored_approaches: self.explored_approaches[approach_type] = []
+            if approach_type not in self.approach_types:
+                self.approach_types.append(approach_type)
+            if approach_type not in self.explored_approaches:
+                self.explored_approaches[approach_type] = []
             self.explored_approaches[approach_type].append(thought)
 
 
             # 2. Update Analysis based on Thought
-            if self.debug_logging: logger.debug(f"Updating analysis for Node {node.sequence} based on thought")
+            if self.debug_logging:
+                logger.debug(f"Updating analysis for Node {node.sequence} based on thought")
             # Pass original content in context for update prompt
             context_for_update = context.copy()
             context_for_update['answer'] = node.content # Use 'answer' key as expected by UPDATE_PROMPT
@@ -613,11 +728,13 @@ class MCTS:
                 logger.error(f"Invalid new content generation for Node {node.sequence}: '{new_content}'")
                 return None # Expansion failed
             new_content = new_content.strip()
-            if self.debug_logging: logger.debug(f"Node {node.sequence} -> New Content: '{truncate_text(new_content, 80)}'")
+            if self.debug_logging:
+                logger.debug(f"Node {node.sequence} -> New Content: '{truncate_text(new_content, 80)}'")
 
             # 3. Generate Tags for New Content
             new_tags = await self.llm.generate_tags(new_content, cfg)
-            if self.debug_logging: logger.debug(f"Generated Tags for new node: {new_tags}")
+            if self.debug_logging:
+                logger.debug(f"Generated Tags for new node: {new_tags}")
 
             # 4. Check for Surprise
             is_surprising, surprise_explanation = self._check_surprise(node, new_content, approach_type, approach_family)
@@ -641,21 +758,34 @@ class MCTS:
 
             # Add child to parent
             node.add_child(child)
-            if is_surprising: self.surprising_nodes.append(child)
+            if is_surprising:
+                self.surprising_nodes.append(child)
 
             # Update branch count if this adds a new branch
-            if len(node.children) > 1: self.memory["branches"] += 1
+            if len(node.children) > 1:
+                self.memory["branches"] += 1
 
-            if self.debug_logging: logger.debug(f"Successfully expanded Node {node.sequence} -> Child {child.sequence}")
+            if self.debug_logging:
+                logger.debug(f"Successfully expanded Node {node.sequence} -> Child {child.sequence}")
             return child
 
         except Exception as e:
             logger.error(f"Expand error on Node {node.sequence}: {e}", exc_info=self.debug_logging)
             return None
 
+    async def simulate(self, node: Node) -> float | None:
+        """
+        Simulates (evaluates) a node using the LLM to get a quality score.
 
-    async def simulate(self, node: Node) -> Optional[float]:
-        """Simulates (evaluates) a node using the LLM, returns score (1-10)."""
+        Args:
+            node: Node to evaluate
+
+        Returns:
+            Score from 1-10, or None if simulation failed
+
+        Note:
+            Updates approach performance tracking and high-scoring node memory
+        """
         cfg = self.config
         if not node.content:
             logger.warning(f"Cannot simulate Node {node.sequence}: Content is empty. Returning default score 5.0")
@@ -666,7 +796,8 @@ class MCTS:
             # Ensure context has the key expected by the eval prompt
             context['answer_to_evaluate'] = node.content
 
-            if self.debug_logging: logger.debug(f"Evaluating Node {node.sequence}")
+            if self.debug_logging:
+                logger.debug(f"Evaluating Node {node.sequence}")
             raw_score = await self.llm.evaluate_analysis(node.content, context, cfg)
 
             # Validate score is int 1-10
@@ -694,7 +825,8 @@ class MCTS:
                  current_avg = self.approach_scores.get(approach, score) # Initialize with current score if first time
                  self.approach_scores[approach] = 0.7 * score + 0.3 * current_avg # EMA update
 
-            if self.debug_logging: logger.debug(f"Node {node.sequence} evaluation result: {score:.1f}/10")
+            if self.debug_logging:
+                logger.debug(f"Node {node.sequence} evaluation result: {score:.1f}/10")
 
             # Update high score memory (use score 1-10)
             if score >= 7:
@@ -709,22 +841,30 @@ class MCTS:
         except Exception as e:
             logger.error(f"Simulate error for Node {node.sequence}: {e}", exc_info=self.debug_logging)
             return None # Indicate simulation failure
+    def backpropagate(self, node: Node, score: float) -> None:
+        """
+        Backpropagates simulation score up the tree to update node statistics.
 
-    def backpropagate(self, node: Node, score: float):
-        """Backpropagates the simulation score up the tree."""
+        Args:
+            node: Starting node for backpropagation
+            score: Score to backpropagate (1-10 scale)
+
+        Note:
+            Updates visit counts and either Bayesian parameters or cumulative values
+        """
         cfg = self.config
         if score is None or not math.isfinite(score):
              logger.warning(f"Invalid score ({score}) received for backpropagation from Node {node.sequence}. Skipping.")
              return
 
-        if self.debug_logging: logger.debug(f"Backpropagating score {score:.2f} from Node {node.sequence}")
+        if self.debug_logging:
+            logger.debug(f"Backpropagating score {score:.2f} from Node {node.sequence}")
 
-        # Normalize score to 0-1 for Bayesian updates if score is 1-10
-        normalized_score = score / 10.0
+        # Use 1-10 score for pseudo counts in Bayesian updates
         pseudo_successes = max(0, score - 1) # Use 1-10 score for pseudo counts
         pseudo_failures = max(0, 10 - score)
 
-        temp_node: Optional[Node] = node
+        temp_node: Node | None = node
         path_len = 0
         while temp_node:
             temp_node.visits += 1
@@ -733,7 +873,8 @@ class MCTS:
                      # Update using pseudo counts from 1-10 score
                      temp_node.alpha = max(1e-9, temp_node.alpha + pseudo_successes)
                      temp_node.beta = max(1e-9, temp_node.beta + pseudo_failures)
-                 else: logger.warning(f"Node {temp_node.sequence} missing alpha/beta during backprop.")
+                 else:
+                     logger.warning(f"Node {temp_node.sequence} missing alpha/beta during backprop.")
             else: # Non-Bayesian: Add score to cumulative value
                  if temp_node.value is not None:
                      temp_node.value += score # Add the raw score (1-10)
@@ -744,10 +885,19 @@ class MCTS:
             temp_node = temp_node.parent
             path_len += 1
 
-        if self.debug_logging: logger.debug(f"Backpropagation complete for Node {node.sequence} (Path length: {path_len})")
-
+        if self.debug_logging:
+            logger.debug(f"Backpropagation complete for Node {node.sequence} (Path length: {path_len})")
     async def run_search_iterations(self, num_iterations: int, simulations_per_iteration: int) -> None:
-        """Runs the main MCTS search loop."""
+        """
+        Runs the main MCTS search loop with concurrent simulation batches.
+
+        Args:
+            num_iterations: Number of iterations to run
+            simulations_per_iteration: Simulations per iteration
+
+        Note:
+            Implements early stopping and concurrent batch processing for performance
+        """
         cfg = self.config
         logger.info(f"Starting MCTS search: {num_iterations} iterations, {simulations_per_iteration} simulations/iter.")
 
@@ -757,7 +907,6 @@ class MCTS:
         for i in range(num_iterations):
             self.iterations_completed = i + 1
             logger.info(f"--- Starting Iteration {self.iterations_completed}/{num_iterations} ---")
-            best_score_before_iter = self.best_score
 
             # Process simulations in batches for better concurrency
             for batch_start in range(0, simulations_per_iteration, max_concurrent):
@@ -793,7 +942,16 @@ class MCTS:
         logger.info("MCTS search finished.")
 
     async def _run_single_simulation(self, current_sim_num: int, total_sims: int) -> None:
-        """Runs a single simulation (select-expand-simulate-backpropagate cycle)."""
+        """
+        Runs a single MCTS simulation cycle (select-expand-simulate-backpropagate).
+
+        Args:
+            current_sim_num: Current simulation number (for logging)
+            total_sims: Total simulations in this batch
+
+        Note:
+            Core MCTS algorithm implementation with error handling and best score tracking
+        """
         self.simulations_completed += 1
         cfg = self.config
 
@@ -843,7 +1001,7 @@ class MCTS:
                 logger.info(f"Sim {current_sim_num}: ✨ New best! Score: {score:.1f} (Node {node_to_simulate.sequence})")
                 self.best_score = score
                 self.best_solution = str(node_to_simulate.content)
-                self.high_score_counter = 0  # Reset stability counter
+                self.high_score_counter = 0 # Reset stability counter
             elif score == self.best_score:
                 # If score matches best, don't reset counter
                 pass
@@ -852,17 +1010,25 @@ class MCTS:
 
             # Check early stopping (threshold) - based on overall best score
             if cfg["early_stopping"] and self.best_score >= cfg["early_stopping_threshold"]:
-                self.high_score_counter += 1  # Increment counter only if score >= threshold
+                self.high_score_counter += 1 # Increment counter only if score >= threshold
                 if self.debug_logging:
                     logger.debug(f"Sim {current_sim_num}: Best score ({self.best_score:.1f}) >= threshold. Stability: {self.high_score_counter}/{cfg['early_stopping_stability']}")
         else:  # Simulation failed (score is None)
             if node_to_simulate:
                 logger.warning(f"Sim {current_sim_num}: Simulation failed for Node {node_to_simulate.sequence}. No score obtained.")
-            self.high_score_counter = 0  # Reset stability counter if sim fails
+            self.high_score_counter = 0 # Reset stability counter if sim fails
 
 
     def get_final_results(self) -> MCTSResult:
-        """Returns the best score and solution found."""
+        """
+        Returns the best score and solution found during MCTS search.
+
+        Returns:
+            MCTSResult namedtuple containing best_score, best_solution_content, and mcts_instance
+
+        Note:
+            Cleans solution content of <think> tags and returns structured results
+        """
         # Clean the best solution content of <think> tags if present
         cleaned_solution = self.best_solution
         if cleaned_solution and isinstance(cleaned_solution, str):
@@ -881,9 +1047,18 @@ class MCTS:
             mcts_instance=self # Return self for further analysis if needed
         )
 
-    def find_best_final_node(self) -> Optional[Node]:
-        """Finds the node object corresponding to the best solution content."""
-        if not self.best_solution or not self.root: return None
+    def find_best_final_node(self) -> Node | None:
+        """
+        Finds the node object corresponding to the best solution content using BFS.
+
+        Returns:
+            Node with content matching best solution, or None if not found
+
+        Note:
+            Performs content cleaning and exact matching with score proximity as tiebreaker
+        """
+        if not self.best_solution or not self.root:
+            return None
 
         queue = [self.root]
         visited_ids = {self.root.id}
@@ -897,7 +1072,8 @@ class MCTS:
 
         while queue:
             current = queue.pop(0)
-            if current is None: continue
+            if current is None:
+                continue
 
             # Clean node content for comparison
             node_content = str(current.content).strip()
@@ -907,12 +1083,9 @@ class MCTS:
             # Check for exact content match (after cleaning)
             if node_content == target_content:
                 score_diff = abs(current.get_average_score() - self.best_score)
-                # Prefer node with score closest to the recorded best score
                 if best_match_node is None or score_diff < min_score_diff:
                     best_match_node = current
                     min_score_diff = score_diff
-                    # Optimization: If perfect match found, can stop early? Only if content is guaranteed unique.
-                    # Let's keep searching to ensure we find the one with the closest score if duplicates exist.
 
             # Add valid children to queue
             for child in current.children:
@@ -921,18 +1094,22 @@ class MCTS:
                     queue.append(child)
 
         if not best_match_node:
-            logger.warning("Could not find node object exactly matching best solution content. Best score might be from a pruned or non-existent node state.")
-            # Fallback: Find node with highest score overall?
-            # best_overall_node = self._find_node_with_highest_score()
-            # return best_overall_node
-            # For now, return None if exact content match fails.
-            return None
+            logger.warning("Could not find node object exactly matching best solution content.")
 
         return best_match_node
 
-    def _find_node_by_id(self, node_id: str) -> Optional[Node]:
-        """Finds a node by its ID using BFS."""
-        if not self.root: return None
+    def _find_node_by_id(self, node_id: str) -> Node | None:
+        """
+        Finds a node by its unique ID using breadth-first search.
+
+        Args:
+            node_id: Unique identifier of the node to find
+
+        Returns:
+            Node with matching ID, or None if not found
+        """
+        if not self.root:
+            return None
         queue = [self.root]
         visited = {self.root.id}
         while queue:
@@ -945,10 +1122,19 @@ class MCTS:
                      queue.append(child)
         return None
 
-    def _find_nodes_by_approach(self, approach_type: str) -> List[Node]:
-        """Finds all nodes with a specific approach type using BFS."""
+    def _find_nodes_by_approach(self, approach_type: str) -> list[Node]:
+        """
+        Finds all nodes with a specific approach type using breadth-first search.
+
+        Args:
+            approach_type: The approach type to search for
+
+        Returns:
+            List of nodes with matching approach type
+        """
         nodes = []
-        if not self.root: return nodes
+        if not self.root:
+            return nodes
         queue = [self.root]
         visited = {self.root.id}
         while queue:
@@ -961,22 +1147,33 @@ class MCTS:
                        queue.append(child)
         return nodes
 
+    def export_tree_summary(self) -> dict[str, Any]:
+        """
+        Exports a summary of the tree structure and key nodes.
 
-    def export_tree_summary(self) -> Dict:
-         """Exports a summary of the tree structure and key nodes."""
-         if not self.root: return {"error": "No root node"}
-         return self.root.node_to_json() # Use the recursive JSON export
+        Returns:
+            Dictionary containing tree structure in JSON format
+        """
+        if not self.root:
+            return {"error": "No root node"}
+        return self.root.node_to_json()
 
-    def get_best_path_nodes(self) -> List[Node]:
-         """Traces the path from the root to the best scoring node found."""
-         best_node = self.find_best_final_node()
-         if not best_node: return []
-         path = []
-         current = best_node
-         while current:
-              path.append(current)
-              current = current.parent
-         return path[::-1] # Reverse to get root -> best order
+    def get_best_path_nodes(self) -> list[Node]:
+        """
+        Traces the path from root to the best scoring node found.
+
+        Returns:
+            List of nodes from root to best node (in order)
+        """
+        best_node = self.find_best_final_node()
+        if not best_node:
+            return []
+        path = []
+        current = best_node
+        while current:
+             path.append(current)
+             current = current.parent
+        return path[::-1]  # Reverse to get root -> best order
 
 # ==============================================================================
 # Intent Handling
